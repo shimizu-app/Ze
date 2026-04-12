@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { C, hd, bd, mono } from "../lib/theme";
 import { CHART_DATA_6, CHART_DATA_12, EXPENSE_DATA } from "../lib/chartData";
 
-function ChartWaveArea() {
+function ChartWaveArea({ data: dataProp }) {
   const [animated, setAnimated] = useState(false);
   const [hover, setHover] = useState(null);
   const [clicked, setClicked] = useState(null);
@@ -10,8 +10,8 @@ function ChartWaveArea() {
   useEffect(() => { const t = setTimeout(() => setAnimated(true), 150); return () => clearTimeout(t); }, []);
 
   const w = 600, h = 200, py = 20;
-  const max = 20;
-  const data = CHART_DATA_6;
+  const data = (dataProp && dataProp.length ? dataProp : CHART_DATA_6);
+  const max = Math.max(20, ...data.map(d => d.revenue || 0));
 
   const makeSpline = (key) => {
     const pts = data.map((d,i) => ({
@@ -168,13 +168,13 @@ function ChartMorphRing({ data: dataProp, periodLabel }) {
 /* ════════════════════════════════════════════════════
    I: RUNWAY BAR — 12ヶ月横並び + スクラブ + オーバーレイ
    ════════════════════════════════════════════════════ */
-function ChartRunwayBar() {
+function ChartRunwayBar({ data: dataProp }) {
   const [animated, setAnimated] = useState(false);
   const [active, setActive] = useState(null);
   const barRef = useRef();
   useEffect(() => { const t = setTimeout(() => setAnimated(true), 200); return () => clearTimeout(t); }, []);
-  const data = CHART_DATA_12;
-  const max = Math.max(...data.map(d => d.revenue));
+  const data = (dataProp && dataProp.length ? dataProp : CHART_DATA_12);
+  const max = Math.max(1, ...data.map(d => d.revenue || 0));
 
   const handleMove = useCallback((e) => {
     if (!barRef.current) return;

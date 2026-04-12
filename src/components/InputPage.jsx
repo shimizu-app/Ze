@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as THREE from "three";
 import { C, hd, bd, mono } from "../lib/theme";
 import { Rv, Mag, Card3, PageShell, BtnApprove } from "./ui";
+import { useUploadedFiles } from "../lib/store";
 
 const InputIconCamera = ({ size = 38, color = "currentColor" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -721,7 +722,7 @@ function FileBoxPage() {
   const [filterCat, setFilterCat] = useState("all");
   const [selected, setSelected] = useState(null);
   const [sortKey, setSortKey] = useState("date");
-  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploadedFiles, setUploadedFiles, addUploadedFile] = useUploadedFiles();
   const [previewFile, setPreviewFile] = useState(null); // { name, url, isImage }
   const dropRef = React.useRef(null);
   const inputRef = React.useRef(null);
@@ -735,7 +736,7 @@ function FileBoxPage() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const today = new Date().toLocaleDateString("ja-JP", { year:"numeric", month:"2-digit", day:"2-digit" }).replace(/\//g, "/");
-        setUploadedFiles(prev => [...prev, {
+        addUploadedFile({
           id: Date.now() + Math.random(),
           name: file.name,
           cat: isImageFile(file.name) ? "レシート" : "請求書",
@@ -750,7 +751,7 @@ function FileBoxPage() {
           isImage: isImageFile(file.name),
           isPdf: isPdfFile(file.name),
           uploaded: true,
-        }]);
+        });
       };
       reader.readAsDataURL(file);
     });

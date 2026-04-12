@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { C, hd, bd, mono } from "../lib/theme";
 import { Rv, Mag, BtnApprove, Card3, PageShell } from "./ui";
 import { ChartMorphRing } from "./Charts";
-import { EXPENSE_DATA } from "../lib/chartData";
+import { useMonthlyLedger, useJournalRows, useExpenseBreakdown } from "../lib/store";
 
 function JournalLedger({ compact, acctFilter, onAcctFilter }) {
   const [editRow, setEditRow] = useState(null);
@@ -17,7 +17,7 @@ function JournalLedger({ compact, acctFilter, onAcctFilter }) {
 
   const accounts = ["会議費","交際費","旅費交通費","消耗品費","通信費","外注費","広告宣伝費","地代家賃","水道光熱費","給料手当","法定福利費","福利厚生費","工具器具備品","雑費","研究開発費","支払手数料","新聞図書費","諸会費","租税公課","減価償却費"];
 
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useJournalRows();
 
   // acctFilter is now an array
   const acctArr = acctFilter || [];
@@ -901,36 +901,7 @@ function FilingForms() {
 function MonthlyLedger() {
   const months = ["4月","5月","6月","7月","8月","9月","10月","11月","12月","1月","2月","3月"];
 
-  const initData = {
-    "収入": {
-      "現金売上":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "掛売上":    [0,0,0,0,0,0,0,0,0,0,0,0],
-      "家事消費等": [0,0,0,0,0,0,0,0,0,0,0,0],
-    },
-    "経費": {
-      "現金仕入":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "掛仕入":    [0,0,0,0,0,0,0,0,0,0,0,0],
-      "租税公課":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "荷造運賃":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "水道光熱費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "旅費交通費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "通信費":    [0,0,0,0,0,0,0,0,0,0,0,0],
-      "広告宣伝費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "接待交際費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "損害保険料": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "修繕費":    [0,0,0,0,0,0,0,0,0,0,0,0],
-      "減価償却費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "福利厚生費": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "給料賃金":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "外注工賃":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "利子割引料": [0,0,0,0,0,0,0,0,0,0,0,0],
-      "地代家賃":  [0,0,0,0,0,0,0,0,0,0,0,0],
-      "貸倒金":    [0,0,0,0,0,0,0,0,0,0,0,0],
-      "雑費":      [0,0,0,0,0,0,0,0,0,0,0,0],
-    },
-  };
-
-  const [data, setData] = useState(initData);
+  const [data, setData] = useMonthlyLedger();
   const [editCell, setEditCell] = useState(null); // "section:row:col"
   const [editBuf, setEditBuf] = useState("");
 
@@ -1074,7 +1045,21 @@ function BooksPage() {
   const [qMemo, setQMemo] = useState("");
   const accts = ["会議費","交際費","旅費交通費","消耗品費","通信費","外注費","広告宣伝費","地代家賃","水道光熱費","給料手当","雑費"];
   const Y = "\u00A5";
-  const addQ = () => { if (!qAmount) return; setQAmount(""); setQMemo(""); setQAccount(""); };
+  const [, , addJournalRow] = useJournalRows();
+  const expenseBreakdown = useExpenseBreakdown();
+  const addQ = () => {
+    if (!qAmount) return;
+    // qDate is yyyy-mm-dd → JournalLedger filters on yyyy/mm/dd.
+    const normalizedDate = qDate.replace(/-/g, "/");
+    addJournalRow({
+      date: normalizedDate,
+      debitAcc: qAccount || "雑費",
+      creditAcc: "現金",
+      debit: Number(String(qAmount).replace(/,/g, "")) || 0,
+      memo: qMemo,
+    });
+    setQAmount(""); setQMemo(""); setQAccount("");
+  };
 
   return (
     <PageShell title="仕訳帳" watermark={"仕訳\n帳"}>
@@ -1107,7 +1092,7 @@ function BooksPage() {
           day: [],
           week: [],
           month: [],
-          year: EXPENSE_DATA,
+          year: expenseBreakdown,
         };
         const periodLabels = { day:"日次経費", week:"週次経費", month:"月次経費", year:"年間経費" };
         return (<>

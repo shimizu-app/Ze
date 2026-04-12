@@ -3,6 +3,7 @@ import { C, hd, bd, mono } from "../lib/theme";
 import { Rv, Mag, Card3, PageShell } from "./ui";
 import { ChartWaveArea, ChartMorphRing, ChartRunwayBar } from "./Charts";
 import { HoloBadge, COMPANY_TYPES } from "./Intake";
+import { useChartSeries6 } from "../lib/store";
 
 function MissingDocsPanel({ missing, sevColor, sevLabel }) {
   const [open, setOpen] = useState(false);
@@ -326,6 +327,7 @@ function ArchetypeBanner() {
 
 function Home({ goTo, goalMode }) {
   const Y = "\u00A5";
+  const chartData6 = useChartSeries6();
 
   /* ── Segmented Bar component (planet.ai style) ── */
   const SegBar = ({ value, max, segments = 28, color = "rgba(139,123,244,.6)" }) => {
@@ -430,7 +432,7 @@ function Home({ goTo, goalMode }) {
             </div>
           </div>
           <div style={{ padding:"8px 16px 0" }}>
-            <ChartWaveArea />
+            <ChartWaveArea data={chartData6} />
           </div>
         </Card3>
       </div></Rv>

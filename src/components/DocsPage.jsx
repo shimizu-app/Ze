@@ -3,10 +3,12 @@ import { C, hd, bd, mono } from "../lib/theme";
 import { Rv, Mag, Card3, PageShell } from "./ui";
 import { ChartRunwayBar } from "./Charts";
 import { FilingForms, MonthlyLedger, FORM_DEFS } from "./BooksPage";
+import { useChartSeries12 } from "../lib/store";
 
 function PlanPage() {
   const months = ["4月","5月","6月","7月","8月","9月","10月","11月","12月","1月","2月","3月"];
   const currentMonth = new Date().getMonth(); // 0-indexed, adjusted for fiscal year below
+  const chartData12 = useChartSeries12();
   const [events, setEvents] = useState([]);
   const [addMonth, setAddMonth] = useState(null);
   const [newLabel, setNewLabel] = useState("");
@@ -95,7 +97,7 @@ function PlanPage() {
           <span style={{ fontSize:10, color:"#B0B0C8", fontFamily:mono }}>← スクラブで月を選択 →</span>
         </div>
         <div style={{ padding:"0 20px 0" }}>
-          <ChartRunwayBar />
+          <ChartRunwayBar data={chartData12} />
         </div>
         <div style={{ height:12 }} />
       </Card3></Rv>

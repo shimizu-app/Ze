@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #04000b;
+  color: #f0e8ff;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+}
+
+.mono {
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Neon glow helper */
+.glow-ac {
+  box-shadow: 0 0 24px rgba(192, 96, 255, 0.35), inset 0 0 0 1px rgba(192, 96, 255, 0.4);
+}

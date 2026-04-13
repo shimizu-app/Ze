@@ -9,7 +9,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
 
   const { data: meeting } = await supabase
     .from("meetings")
-    .select("id, room_id, company_name, contact_name, avatar_id, mode")
+    .select("id, room_id, company_name, contact_name, avatar_id, mode, host_paused")
     .eq("room_id", params.roomId)
     .maybeSingle();
 
@@ -67,6 +67,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
 
   return (
     <MeetRoom
+      meetingId={meeting.id}
       roomId={meeting.room_id}
       companyName={meeting.company_name}
       contactName={meeting.contact_name ?? null}
@@ -74,6 +75,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
       heygenAvatarId={heygenAvatarId}
       voiceId={voiceId}
       greeting={greeting}
+      initialHostPaused={Boolean(meeting.host_paused)}
     />
   );
 }

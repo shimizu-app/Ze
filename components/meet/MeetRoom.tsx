@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { useHeyGenAvatar } from "./useHeyGenAvatar";
 import { useDeepgramSTT } from "./useDeepgramSTT";
 import { useConversationTurns } from "./useConversationTurns";
@@ -10,6 +11,7 @@ import { ControlBar } from "./ControlBar";
 import { ChatHistory } from "./ChatHistory";
 
 interface Props {
+  meetingId: string;
   roomId: string;
   companyName: string;
   contactName: string | null;
@@ -17,9 +19,11 @@ interface Props {
   heygenAvatarId: string;
   voiceId?: string;
   greeting: string;
+  initialHostPaused: boolean;
 }
 
 export function MeetRoom({
+  meetingId,
   roomId,
   companyName,
   contactName,
@@ -27,11 +31,43 @@ export function MeetRoom({
   heygenAvatarId,
   voiceId,
   greeting,
+  initialHostPaused,
 }: Props) {
   const [started, setStarted] = useState(false);
   const [userInterim, setUserInterim] = useState("");
   const [aiLatest, setAiLatest] = useState("");
   const [thinking, setThinking] = useState(false);
+  const [hostPaused, setHostPaused] = useState<boolean>(initialHostPaused);
+  const hostPausedRef = useRef<boolean>(initialHostPaused);
+
+  useEffect(() => {
+    hostPausedRef.current = hostPaused;
+  }, [hostPaused]);
+
+  // Realtime subscription: react to host_paused changes from the observer page.
+  useEffect(() => {
+    if (!started) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`guest-meeting-${meetingId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "meetings",
+          filter: `id=eq.${meetingId}`,
+        },
+        (payload) => {
+          const row = payload.new as { host_paused: boolean | null };
+          setHostPaused(Boolean(row.host_paused));
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [started, meetingId]);
 
   const { turns, append, endMeeting } = useConversationTurns({ roomId, enabled: started });
   const { videoRef, status: avatarStatus, speak } = useHeyGenAvatar({
@@ -57,6 +93,12 @@ export function MeetRoom({
       setUserInterim("");
       if (!text.trim()) return;
       append("user", text);
+
+      // Host has paused AI — record the turn but don't generate a reply.
+      if (hostPausedRef.current) {
+        setAiLatest("（ホストに取次中です。しばらくお待ちください...）");
+        return;
+      }
 
       setThinking(true);
       try {
@@ -133,7 +175,12 @@ export function MeetRoom({
             <div className="mono text-[10px] text-ac/70">MEETING // {roomId}</div>
             <h1 className="text-xl font-semibold">{companyName} との商談</h1>
           </div>
-          <div className="flex items-center gap-2 text-xs text-white/50">
+          <div className="flex items-center gap-3 text-xs text-white/50">
+            {hostPaused && (
+              <span className="mono text-[10px] px-2 py-1 rounded bg-amber/15 text-amber animate-pulse">
+                ホスト取次中
+              </span>
+            )}
             <span
               className={`w-2 h-2 rounded-full ${
                 avatarStatus === "ready" ? "bg-green animate-pulse" : "bg-amber"

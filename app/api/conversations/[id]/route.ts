@@ -36,6 +36,21 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       .from("meetings")
       .update({ status: "ended", ended_at: new Date().toISOString() })
       .eq("id", meeting.id);
+
+    // Fire-and-forget Gemini cause analysis. We await the fetch but
+    // swallow errors so the meeting end is never blocked.
+    try {
+      const base = new URL(req.url);
+      base.pathname = "/api/analysis";
+      await fetch(base.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: params.id }),
+      });
+    } catch (err) {
+      console.error("[conversations] analysis trigger failed", err);
+    }
+
     return NextResponse.json({ ok: true });
   }
 

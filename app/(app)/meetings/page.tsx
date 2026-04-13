@@ -75,11 +75,19 @@ export default function MeetingsPage() {
                         {m.status?.toUpperCase()}
                       </span>
                       <Link
-                        href={`/meet/${m.room_id}`}
+                        href={`/meetings/${m.id}`}
                         className="px-3 py-1.5 text-xs bg-s2 hover:bg-ac/20 rounded border border-white/10 hover:border-ac/40 transition"
                       >
-                        開く →
+                        観察 →
                       </Link>
+                      <a
+                        href={`/meet/${m.room_id}`}
+                        target="_blank"
+                        rel="noopener"
+                        className="px-3 py-1.5 text-xs bg-s2 hover:bg-ac/20 rounded border border-white/10 hover:border-ac/40 transition"
+                      >
+                        ゲスト画面 ↗
+                      </a>
                     </div>
                   </div>
                 </div>

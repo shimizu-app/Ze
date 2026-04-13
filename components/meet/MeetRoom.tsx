@@ -101,6 +101,10 @@ export function MeetRoom({
       }
 
       setThinking(true);
+      const requestStart = performance.now();
+      let firstChunkAt: number | null = null;
+      let firstSpeakAt: number | null = null;
+
       try {
         const res = await fetch("/api/rag", {
           method: "POST",
@@ -109,13 +113,87 @@ export function MeetRoom({
             room_id: roomId,
             user_text: text,
             history: turns.map((t) => ({ role: t.role, text: t.text })),
+            stream: true,
           }),
         });
-        if (!res.ok) throw new Error("rag failed");
-        const { text: reply } = (await res.json()) as { text: string };
-        setAiLatest(reply);
-        append("assistant", reply);
-        await speak(reply);
+        if (!res.ok || !res.body) throw new Error("rag failed");
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+        let fullText = "";
+        let pendingSentenceBuffer = "";
+        // Regex that captures a complete sentence ending with Japanese/latin punctuation.
+        const sentenceRe = /[^。！？!?\n]*[。！？!?\n]/;
+
+        async function flushSentences(done = false) {
+          while (true) {
+            const match = pendingSentenceBuffer.match(sentenceRe);
+            if (!match) break;
+            const sentence = match[0].trim();
+            pendingSentenceBuffer = pendingSentenceBuffer.slice(match[0].length);
+            if (sentence) {
+              if (firstSpeakAt === null) {
+                firstSpeakAt = performance.now();
+                console.log(
+                  `[meet] time-to-first-speak: ${Math.round(
+                    firstSpeakAt - requestStart
+                  )}ms (first chunk at ${
+                    firstChunkAt ? Math.round(firstChunkAt - requestStart) + "ms" : "?"
+                  })`
+                );
+              }
+              // Fire-and-forget: HeyGen queues speak() calls internally.
+              speak(sentence);
+            }
+          }
+          if (done && pendingSentenceBuffer.trim()) {
+            // Speak any trailing fragment without terminal punctuation.
+            speak(pendingSentenceBuffer.trim());
+            pendingSentenceBuffer = "";
+          }
+        }
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE frames (blank-line delimited).
+          let idx;
+          while ((idx = sseBuffer.indexOf("\n\n")) !== -1) {
+            const frame = sseBuffer.slice(0, idx);
+            sseBuffer = sseBuffer.slice(idx + 2);
+            if (!frame.startsWith("data:")) continue;
+            try {
+              const payload = JSON.parse(frame.replace(/^data:\s*/, ""));
+              if (payload.type === "chunk" && typeof payload.text === "string") {
+                if (firstChunkAt === null) firstChunkAt = performance.now();
+                fullText += payload.text;
+                pendingSentenceBuffer += payload.text;
+                setAiLatest(fullText);
+                await flushSentences(false);
+              } else if (payload.type === "done") {
+                await flushSentences(true);
+              } else if (payload.type === "error") {
+                console.error("[meet] rag stream error", payload.message);
+              }
+            } catch (err) {
+              console.error("[meet] sse parse failed", err);
+            }
+          }
+        }
+
+        // Final flush (in case the stream ended mid-frame).
+        await flushSentences(true);
+
+        if (fullText.trim()) {
+          append("assistant", fullText.trim());
+        }
+
+        console.log(
+          `[meet] total rag time: ${Math.round(performance.now() - requestStart)}ms`
+        );
       } catch (err) {
         console.error("[meet] rag failed", err);
       } finally {

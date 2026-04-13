@@ -19,10 +19,26 @@ export async function geminiEmbed(text: string): Promise<number[]> {
 }
 
 /**
- * Generate a text completion using Gemini 2.5 Flash.
+ * Generate a text completion using Gemini 2.0 Flash.
  */
 export async function geminiGenerate(prompt: string): Promise<string> {
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
   const result = await model.generateContent(prompt);
   return result.response.text();
+}
+
+/**
+ * Stream a text completion using Gemini 2.0 Flash.
+ * Yields partial text chunks as they arrive from Gemini so the caller
+ * can start speaking the first sentence before the full response is
+ * ready. This is the critical primitive behind Phase 4's sub-second
+ * time-to-first-speech target.
+ */
+export async function* geminiGenerateStream(prompt: string): AsyncGenerator<string> {
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+  const result = await model.generateContentStream(prompt);
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) yield text;
+  }
 }

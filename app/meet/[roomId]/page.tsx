@@ -1,44 +1,79 @@
-import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
+import { createServiceClient } from "@/lib/supabase/service";
+import { MeetRoom } from "@/components/meet/MeetRoom";
 
-export default async function MeetRoom({ params }: { params: { roomId: string } }) {
-  const supabase = createClient();
+export const dynamic = "force-dynamic";
+
+export default async function MeetPage({ params }: { params: { roomId: string } }) {
+  const supabase = createServiceClient();
+
   const { data: meeting } = await supabase
     .from("meetings")
-    .select("*")
+    .select("id, room_id, company_name, contact_name, avatar_id, mode")
     .eq("room_id", params.roomId)
-    .single();
+    .maybeSingle();
 
   if (!meeting) notFound();
 
-  return (
-    <div className="min-h-screen bg-bg flex items-center justify-center p-6">
-      <div className="max-w-2xl w-full rounded-3xl border border-ac/30 bg-s1 p-10 glow-ac text-center">
-        <div className="mono text-[10px] text-ac/70 mb-3">MEETING ROOM // {meeting.room_id}</div>
-        <h1 className="text-3xl font-bold mb-4">
-          <span className="text-ac">{meeting.company_name}</span> との商談
-        </h1>
-        {meeting.contact_name && (
-          <div className="text-white/60 mb-6">{meeting.contact_name} 様</div>
-        )}
+  let avatarName = "営業アバター";
+  let heygenAvatarId = "";
+  let voiceId: string | undefined;
+  let greeting = `こんにちは、${meeting.company_name}様。本日はお時間いただきありがとうございます。私がAI営業担当を務めさせていただきます。本日はどのようなことを重点的にお話できればよろしいでしょうか？`;
 
-        <div className="rounded-2xl border border-white/10 bg-s2 p-8 my-8">
-          <div className="text-ac text-5xl mb-3">🎭</div>
-          <div className="text-xl font-semibold mb-2">AIアバターが準備中</div>
-          <p className="text-sm text-white/60 mb-4">
-            この会議室は Phase 2 で実装されます。
-            <br />
-            WebRTC + HeyGen LiveAvatar + Deepgram + Gemini RAG が統合される予定です。
+  if (meeting.avatar_id) {
+    const { data: avatar } = await supabase
+      .from("avatars")
+      .select("name, heygen_avatar_id, voice_tone, character_notes, goal")
+      .eq("id", meeting.avatar_id)
+      .maybeSingle();
+    if (avatar) {
+      avatarName = avatar.name ?? avatarName;
+      heygenAvatarId = avatar.heygen_avatar_id ?? "";
+      voiceId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE;
+    }
+  }
+
+  if (!heygenAvatarId) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-amber/40 bg-s1 p-8 text-center">
+          <div className="text-4xl mb-3">⚠️</div>
+          <div className="text-lg font-semibold mb-2">アバター未設定</div>
+          <p className="text-sm text-white/60">
+            この会議にはアバターが紐付いていないか、HeyGen Avatar ID が設定されていません。
+            作成者にお問い合わせください。
           </p>
-          <div className="mono text-[10px] text-white/40 mt-6">
-            STATUS: {meeting.status?.toUpperCase()}
-          </div>
-        </div>
-
-        <div className="text-xs text-white/40">
-          Phase 1 完了時点：会議リンクの発行までが実装済み
+          <div className="mono text-[10px] text-white/30 mt-6">ROOM {meeting.room_id}</div>
         </div>
       </div>
-    </div>
+    );
+  }
+
+  if (meeting.mode !== "ai_only") {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-ac/30 bg-s1 p-8 text-center glow-ac">
+          <div className="text-4xl mb-3">🚧</div>
+          <div className="text-lg font-semibold mb-2">
+            {meeting.mode === "ai_escalation" ? "AI + ホストエスカレーション" : "AI + ホスト同時参加"}
+          </div>
+          <p className="text-sm text-white/60">
+            このモードは Phase 2.1 で実装予定です。現在利用できるのは「AI ノンブロッキング」モードのみです。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <MeetRoom
+      roomId={meeting.room_id}
+      companyName={meeting.company_name}
+      contactName={meeting.contact_name ?? null}
+      avatarName={avatarName}
+      heygenAvatarId={heygenAvatarId}
+      voiceId={voiceId}
+      greeting={greeting}
+    />
   );
 }

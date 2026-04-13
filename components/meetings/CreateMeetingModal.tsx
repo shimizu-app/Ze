@@ -13,6 +13,7 @@ export function CreateMeetingModal({ open, onClose, onCreated }: Props) {
   const [contactName, setContactName] = useState("");
   const [avatarId, setAvatarId] = useState("");
   const [productId, setProductId] = useState("");
+  const [mode, setMode] = useState<"ai_only" | "ai_escalation" | "ai_human">("ai_only");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avatars, setAvatars] = useState<{ id: string; name: string }[]>([]);
@@ -44,6 +45,7 @@ export function CreateMeetingModal({ open, onClose, onCreated }: Props) {
           contact_name: contactName || null,
           avatar_id: avatarId || null,
           product_id: productId || null,
+          mode,
         }),
       });
       if (!res.ok) {
@@ -113,6 +115,39 @@ export function CreateMeetingModal({ open, onClose, onCreated }: Props) {
               </option>
             ))}
           </select>
+        </Field>
+
+        <Field label="会議モード">
+          <div className="grid gap-2">
+            {(
+              [
+                { v: "ai_only", label: "AI ノンブロッキング", desc: "AIアバターが単独で商談", active: true },
+                { v: "ai_escalation", label: "AI + ホストエスカレーション", desc: "必要時にホストが引き取り", active: false },
+                { v: "ai_human", label: "AI + ホスト同時参加", desc: "AIと人間が並行参加", active: false },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setMode(opt.v)}
+                className={`text-left px-4 py-2.5 rounded-lg border transition ${
+                  mode === opt.v
+                    ? "border-ac bg-ac/10"
+                    : "border-white/10 hover:border-white/30"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">{opt.label}</span>
+                  {!opt.active && (
+                    <span className="mono text-[9px] text-amber bg-amber/10 px-2 py-0.5 rounded">
+                      Phase 2.1
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-white/50 mt-0.5">{opt.desc}</div>
+              </button>
+            ))}
+          </div>
         </Field>
 
         {error && <div className="text-xs text-red">{error}</div>}

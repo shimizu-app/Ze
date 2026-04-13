@@ -22,6 +22,9 @@ export async function POST(req: Request) {
   const body = await req.json();
   const roomId = body.room_id ?? randomRoomId();
 
+  const allowedModes = ["ai_only", "ai_escalation", "ai_human"] as const;
+  const mode = allowedModes.includes(body.mode) ? body.mode : "ai_only";
+
   const { data, error } = await supabase
     .from("meetings")
     .insert({
@@ -34,6 +37,7 @@ export async function POST(req: Request) {
       scheduled_at: body.scheduled_at ?? null,
       note: body.note ?? null,
       status: "waiting",
+      mode,
     })
     .select()
     .single();

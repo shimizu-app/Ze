@@ -1,12 +1,90 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { geminiEmbed } from "@/lib/gemini";
-import { listHeyGenAvatars } from "@/lib/heygen";
+import { listHeyGenAvatars, type HeyGenAvatar } from "@/lib/heygen";
 import { randomRoomId } from "@/lib/utils";
 import {
   SALES_AI_LAB_KNOWLEDGE,
   SELF_DEMO_AVATAR_SYSTEM_PROMPT,
 } from "@/lib/seed/sales-ai-lab-knowledge";
+
+/**
+ * Prefer a professional-looking human avatar for the self-demo so
+ * visitors see a business persona ("ソラ") instead of whatever happens
+ * to sit at index 0 of the catalog (which has been landing on Santa
+ * and other holiday / cartoon characters).
+ */
+function pickBusinessAvatar(list: HeyGenAvatar[]): HeyGenAvatar | null {
+  const PROFESSIONAL_HINTS = [
+    "business",
+    "professional",
+    "suit",
+    "office",
+    "corporate",
+    "formal",
+    "executive",
+    "consultant",
+    "sales",
+    "manager",
+    "banker",
+    "lawyer",
+    "hr",
+    "receptionist",
+    "anchor",
+    "presenter",
+    "ceo",
+    "host",
+    "spokesperson",
+  ];
+  const AVOID_HINTS = [
+    "santa",
+    "xmas",
+    "christmas",
+    "halloween",
+    "pumpkin",
+    "witch",
+    "zombie",
+    "vampire",
+    "dragon",
+    "monster",
+    "alien",
+    "rabbit",
+    "bunny",
+    "cat",
+    "dog",
+    "bear",
+    "panda",
+    "fox",
+    "cartoon",
+    "anime",
+    "chibi",
+    "costume",
+    "mascot",
+    "robot",
+    "kid",
+    "child",
+    "baby",
+  ];
+
+  const withPreview = list.filter((a) => a.preview_image_url);
+  const safe = withPreview.filter(
+    (a) => !AVOID_HINTS.some((h) => a.avatar_name.toLowerCase().includes(h))
+  );
+
+  // First preference: safe + professional name hint
+  const professional = safe.find((a) =>
+    PROFESSIONAL_HINTS.some((h) => a.avatar_name.toLowerCase().includes(h))
+  );
+  if (professional) return professional;
+
+  // Second preference: any safe avatar with a preview image
+  if (safe.length > 0) return safe[0];
+
+  // Third: any avatar with a preview
+  if (withPreview.length > 0) return withPreview[0];
+
+  return null;
+}
 
 /**
  * POST /api/auth/demo
@@ -107,11 +185,13 @@ export async function POST(req: Request) {
       }
     }
 
-    // 5. Pick a HeyGen avatar from the catalog.
+    // 5. Pick a HeyGen avatar from the catalog, preferring professional
+    //    human-looking ones (business, office, suit...) and filtering
+    //    out holiday/cartoon characters (santa, pumpkin, dragon...).
     let heygenAvatarId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_AVATAR ?? "";
     try {
       const avatars = await listHeyGenAvatars();
-      const first = avatars.find((a) => a.preview_image_url) ?? avatars[0];
+      const first = pickBusinessAvatar(avatars) ?? avatars.find((a) => a.preview_image_url) ?? avatars[0];
       if (first) heygenAvatarId = first.avatar_id;
     } catch (err) {
       console.error("[demo] heygen list failed", err);

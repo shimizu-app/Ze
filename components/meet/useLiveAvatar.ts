@@ -52,7 +52,13 @@ export function useLiveAvatar({
 
         if (cancelled) return;
 
-        const session = new LiveAvatarSession(sessionToken);
+        // Disable the SDK's built-in VoiceChat so it doesn't grab the
+        // microphone — we use Deepgram independently for STT. This also
+        // keeps the SDK from failing on machines with no camera, since
+        // LiveKit's initial media negotiation is short-circuited.
+        const session = new LiveAvatarSession(sessionToken, {
+          voiceChat: false,
+        });
         sessionRef.current = session;
 
         console.log("[liveavatar] calling session.start()");

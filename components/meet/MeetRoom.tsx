@@ -3,11 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useHeyGenAvatar } from "./useHeyGenAvatar";
+import { useLiveAvatar } from "./useLiveAvatar";
 import { useDeepgramSTT } from "./useDeepgramSTT";
 import { useConversationTurns } from "./useConversationTurns";
 import { VideoPanel } from "./VideoPanel";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
+
+// Feature flag: when set, drive the meet room with the new
+// @heygen/liveavatar-web-sdk pipeline instead of the deprecated
+// streaming-avatar SDK. Toggle via env var on Vercel.
+const USE_LIVEAVATAR = process.env.NEXT_PUBLIC_USE_LIVEAVATAR === "true";
 import { ChatHistory } from "./ChatHistory";
 
 interface Props {
@@ -70,12 +76,23 @@ export function MeetRoom({
   }, [started, meetingId]);
 
   const { turns, append, endMeeting } = useConversationTurns({ roomId, enabled: started });
-  const { videoRef, status: avatarStatus, speak } = useHeyGenAvatar({
+
+  // Pick the avatar pipeline based on the build-time feature flag.
+  // We instantiate both hooks but only enable one at a time so the
+  // unused pipeline never connects.
+  const heyGen = useHeyGenAvatar({
     roomId,
     avatarName: heygenAvatarId,
     voiceId,
-    enabled: started,
+    enabled: started && !USE_LIVEAVATAR,
   });
+  const liveAvatar = useLiveAvatar({
+    roomId,
+    enabled: started && USE_LIVEAVATAR,
+  });
+  const videoRef = USE_LIVEAVATAR ? liveAvatar.videoRef : heyGen.videoRef;
+  const avatarStatus = USE_LIVEAVATAR ? liveAvatar.status : heyGen.status;
+  const speak = USE_LIVEAVATAR ? liveAvatar.speak : heyGen.speak;
 
   // After the avatar connects, greet the guest once.
   const [greeted, setGreeted] = useState(false);

@@ -7,6 +7,13 @@ type Status = "idle" | "requesting-mic" | "connecting" | "listening" | "error" |
 interface Options {
   roomId: string;
   enabled: boolean;
+  /**
+   * When true, the hook suspends mic capture and drops any transcripts
+   * that arrive. MeetRoom uses this to mute the mic while the avatar
+   * is speaking so the TTS output doesn't loop back through Deepgram
+   * and trigger an echo conversation.
+   */
+  externalMute?: boolean;
   onInterim?: (text: string) => void;
   onFinal?: (text: string) => void;
 }
@@ -16,7 +23,13 @@ interface Options {
  * Fetches a scoped key from /api/deepgram/token, captures the mic via
  * getUserMedia, and streams audio chunks over a WebSocket.
  */
-export function useDeepgramSTT({ roomId, enabled, onInterim, onFinal }: Options) {
+export function useDeepgramSTT({
+  roomId,
+  enabled,
+  externalMute = false,
+  onInterim,
+  onFinal,
+}: Options) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
@@ -26,11 +39,24 @@ export function useDeepgramSTT({ roomId, enabled, onInterim, onFinal }: Options)
   const streamRef = useRef<MediaStream | null>(null);
   const onInterimRef = useRef(onInterim);
   const onFinalRef = useRef(onFinal);
+  const mutedRef = useRef(false);
+  const externalMuteRef = useRef(externalMute);
 
   useEffect(() => {
     onInterimRef.current = onInterim;
     onFinalRef.current = onFinal;
   }, [onInterim, onFinal]);
+
+  // Re-apply mute state whenever the manual or external mute flags change.
+  useEffect(() => {
+    externalMuteRef.current = externalMute;
+    const shouldMute = muted || externalMute;
+    streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !shouldMute));
+  }, [muted, externalMute]);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -77,6 +103,10 @@ export function useDeepgramSTT({ roomId, enabled, onInterim, onFinal }: Options)
             const data = JSON.parse(e.data as string);
             const alt = data?.channel?.alternatives?.[0];
             if (!alt || !alt.transcript) return;
+            // Drop anything that arrives while the avatar is speaking
+            // or the user has muted — otherwise the avatar's own voice
+            // or accidental background noise would loop back in.
+            if (externalMuteRef.current || mutedRef.current) return;
             if (data.is_final) {
               onFinalRef.current?.(alt.transcript);
             } else {

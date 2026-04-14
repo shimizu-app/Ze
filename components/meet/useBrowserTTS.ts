@@ -1,21 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Status = "idle" | "connecting" | "ready" | "error" | "ended";
 
+export interface BrowserVoice {
+  id: string; // voiceURI
+  name: string;
+  lang: string;
+  localService: boolean;
+  default: boolean;
+  /** Heuristic quality score — higher is better. */
+  quality: number;
+}
+
 /**
- * Browser-native TTS pipeline. Uses the Web Speech API (SpeechSynthesis)
- * to drive avatar speech without any external service, credits, or
- * camera hardware. Shape-compatible with useLiveAvatar / useHeyGenAvatar
- * so MeetRoom can swap pipelines behind a simple dispatch.
+ * Browser-native TTS pipeline using the Web Speech API.
+ * Zero cost, zero API calls, zero credits — ideal for お試しモード.
  *
- * Trade-offs:
- * - Quality depends on the user's OS (macOS Kyoko/Otoya are decent,
- *   mobile devices usually ship with good Japanese voices).
- * - No video stream — the VideoPanel falls back to the static
- *   avatar placeholder + speaking indicator.
- * - Zero latency, zero API calls, zero cost — ideal for お試しモード.
+ * Exposes a voice list so the user can swap between whatever high-
+ * quality Japanese voices their OS ships with (macOS Siri/Kyoko
+ * Enhanced, Windows Ayumi/Haruka Neural, mobile system voices, etc.).
  */
 export function useBrowserTTS({
   enabled,
@@ -28,9 +33,10 @@ export function useBrowserTTS({
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(false);
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Pick a Japanese voice as soon as voices are loaded.
   useEffect(() => {
     if (!enabled) return;
     if (typeof window === "undefined" || !window.speechSynthesis) {
@@ -39,23 +45,53 @@ export function useBrowserTTS({
       return;
     }
 
-    function pickVoice() {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length === 0) return;
-      // Prefer Japanese; fall back to whatever we have.
-      const ja = voices.find((v) => v.lang.startsWith("ja"));
-      voiceRef.current = ja ?? voices[0];
+    function loadVoices() {
+      const all = window.speechSynthesis.getVoices();
+      if (all.length === 0) return;
+      setVoices(all);
+
+      // Pick the best Japanese voice if we haven't chosen one yet.
+      setSelectedVoiceId((prev) => {
+        if (prev) return prev;
+        const best = pickBestJapaneseVoice(all);
+        if (best) {
+          selectedVoiceRef.current = best;
+          return best.voiceURI;
+        }
+        return null;
+      });
+
       setStatus("ready");
     }
 
-    pickVoice();
-    window.speechSynthesis.onvoiceschanged = pickVoice;
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
 
     return () => {
       window.speechSynthesis.onvoiceschanged = null;
       window.speechSynthesis.cancel();
     };
   }, [enabled]);
+
+  // Keep ref in sync with selected id so speak() uses the latest pick.
+  useEffect(() => {
+    const match = voices.find((v) => v.voiceURI === selectedVoiceId);
+    if (match) selectedVoiceRef.current = match;
+  }, [voices, selectedVoiceId]);
+
+  const selectableVoices = useMemo<BrowserVoice[]>(() => {
+    return voices
+      .filter((v) => v.lang.toLowerCase().startsWith(language.slice(0, 2).toLowerCase()))
+      .map((v) => ({
+        id: v.voiceURI,
+        name: v.name,
+        lang: v.lang,
+        localService: v.localService,
+        default: v.default,
+        quality: voiceQualityScore(v),
+      }))
+      .sort((a, b) => b.quality - a.quality);
+  }, [voices, language]);
 
   const speak = useCallback(
     async (text: string) => {
@@ -66,8 +102,8 @@ export function useBrowserTTS({
 
       const u = new SpeechSynthesisUtterance(clean);
       u.lang = language;
-      if (voiceRef.current) u.voice = voiceRef.current;
-      u.rate = 1.05;
+      if (selectedVoiceRef.current) u.voice = selectedVoiceRef.current;
+      u.rate = 1.0;
       u.pitch = 1.0;
       u.onstart = () => setSpeaking(true);
       u.onend = () => setSpeaking(false);
@@ -78,5 +114,41 @@ export function useBrowserTTS({
     [enabled, language]
   );
 
-  return { videoRef, status, error, speak, speaking };
+  return {
+    videoRef,
+    status,
+    error,
+    speak,
+    speaking,
+    voices: selectableVoices,
+    selectedVoiceId,
+    setSelectedVoiceId,
+  };
+}
+
+function voiceQualityScore(v: SpeechSynthesisVoice): number {
+  const name = v.name.toLowerCase();
+  let score = 0;
+  // Modern neural / premium voice markers
+  if (/premium|enhanced|neural|siri|natural|wavenet/.test(name)) score += 100;
+  // Known high-quality Japanese voices
+  if (/kyoko|otoya|ayumi|haruka|nanami|keita/.test(name)) score += 50;
+  // Network voices (often higher quality than default local ones)
+  if (!v.localService) score += 10;
+  // Bonus for exact ja-JP tag
+  if (v.lang.toLowerCase() === "ja-jp") score += 5;
+  return score;
+}
+
+function pickBestJapaneseVoice(
+  all: SpeechSynthesisVoice[]
+): SpeechSynthesisVoice | null {
+  const japanese = all.filter((v) =>
+    v.lang.toLowerCase().startsWith("ja")
+  );
+  if (japanese.length === 0) return all[0] ?? null;
+  const sorted = japanese
+    .map((v) => ({ v, score: voiceQualityScore(v) }))
+    .sort((a, b) => b.score - a.score);
+  return sorted[0].v;
 }

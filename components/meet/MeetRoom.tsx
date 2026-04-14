@@ -249,9 +249,18 @@ export function MeetRoom({
     [append, roomId, speak, turns]
   );
 
+  // While the AI is speaking, mute the mic so its own voice doesn't
+  // echo back through Deepgram and trigger an infinite おうむ返し loop.
+  // browser_tts exposes a reliable `speaking` flag via SpeechSynthesis
+  // onstart/onend events; LiveAvatar / HeyGen speak() kicks off a
+  // streamed audio track that we don't have an explicit talking
+  // signal for yet, so default to false and rely on echo cancellation.
+  const aiSpeaking = usingBrowserTTS ? browserTTS.speaking : false;
+
   const { status: sttStatus, muted, toggleMute, error: sttError } = useDeepgramSTT({
     roomId,
     enabled: started,
+    externalMute: aiSpeaking || thinking,
     onInterim: setUserInterim,
     onFinal: onFinalTranscript,
   });
@@ -338,9 +347,31 @@ export function MeetRoom({
               <div className="text-xs text-white/50 text-center">マイク許可を待っています...</div>
             )}
           </div>
-          <aside className="rounded-2xl border border-white/10 bg-s1 p-4">
-            <div className="mono text-[10px] text-white/50 mb-3">CONVERSATION LOG</div>
-            <ChatHistory turns={turns} />
+          <aside className="space-y-4">
+            {usingBrowserTTS && browserTTS.voices.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-s1 p-4">
+                <div className="mono text-[10px] text-white/50 mb-2">VOICE</div>
+                <select
+                  value={browserTTS.selectedVoiceId ?? ""}
+                  onChange={(e) => browserTTS.setSelectedVoiceId(e.target.value)}
+                  className="w-full bg-s2 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-ac"
+                >
+                  {browserTTS.voices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                      {v.quality >= 100 ? " ★" : v.quality >= 50 ? " ☆" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-2 text-[10px] text-white/40">
+                  ★ = Premium/Enhanced voice (高品質)
+                </div>
+              </div>
+            )}
+            <div className="rounded-2xl border border-white/10 bg-s1 p-4">
+              <div className="mono text-[10px] text-white/50 mb-3">CONVERSATION LOG</div>
+              <ChatHistory turns={turns} />
+            </div>
           </aside>
         </div>
       </div>

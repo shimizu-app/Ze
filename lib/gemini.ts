@@ -18,11 +18,13 @@ export async function geminiEmbed(text: string): Promise<number[]> {
   return result.embedding.values;
 }
 
+const MODEL = "gemini-2.0-flash";
+
 /**
  * Generate a text completion using Gemini 2.0 Flash.
  */
 export async function geminiGenerate(prompt: string): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+  const model = genAI.getGenerativeModel({ model: MODEL });
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
@@ -35,7 +37,7 @@ export async function geminiGenerate(prompt: string): Promise<string> {
  * time-to-first-speech target.
  */
 export async function* geminiGenerateStream(prompt: string): AsyncGenerator<string> {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+  const model = genAI.getGenerativeModel({ model: MODEL });
   const result = await model.generateContentStream(prompt);
   for await (const chunk of result.stream) {
     const text = chunk.text();

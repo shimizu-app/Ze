@@ -10,10 +10,12 @@ import { VideoPanel } from "./VideoPanel";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
 
-// Feature flag: when set, drive the meet room with the new
-// @heygen/liveavatar-web-sdk pipeline instead of the deprecated
-// streaming-avatar SDK. Toggle via env var on Vercel.
-const USE_LIVEAVATAR = process.env.NEXT_PUBLIC_USE_LIVEAVATAR === "true";
+// Feature flag: drives the meet room with the @heygen/liveavatar-web-sdk
+// pipeline. Defaults to ON because the legacy HeyGen Streaming Avatar
+// API is sunset and returning 401 on this account. Set
+// NEXT_PUBLIC_USE_LIVEAVATAR=false on Vercel only if you need to fall
+// back to the old streaming SDK for testing.
+const USE_LIVEAVATAR = process.env.NEXT_PUBLIC_USE_LIVEAVATAR !== "false";
 import { ChatHistory } from "./ChatHistory";
 
 interface Props {

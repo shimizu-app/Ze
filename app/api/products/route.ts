@@ -64,5 +64,53 @@ export async function POST(req: Request) {
     // Non-fatal - product is still created
   }
 
+  // 3. Phase 9D: precompute embeddings for common FAQ patterns so
+  //    the meet room can short-circuit RAG lookups on the most
+  //    frequent questions. Fire-and-forget — failures are logged
+  //    but don't block product creation.
+  void precomputeFaqCache(product.id, accountId, product.name, supabase).catch((err) => {
+    console.error("[products] faq precompute failed", err);
+  });
+
   return NextResponse.json({ product });
+}
+
+const COMMON_FAQ_TEMPLATES = [
+  "料金はいくらですか？",
+  "他社と比べてどうですか？",
+  "導入期間はどのくらいですか？",
+  "セキュリティは大丈夫ですか？",
+  "無料トライアルはありますか？",
+  "どんな業界で使えますか？",
+  "サポート体制はどうなっていますか？",
+  "解約はいつでもできますか？",
+];
+
+async function precomputeFaqCache(
+  productId: string,
+  accountId: string,
+  productName: string,
+  supabase: ReturnType<typeof createClient>
+) {
+  // Embed each FAQ question in parallel and upsert into question_cache.
+  const rows = await Promise.all(
+    COMMON_FAQ_TEMPLATES.map(async (question) => {
+      try {
+        const embedding = await geminiEmbed(question);
+        return {
+          account_id: accountId,
+          product_id: productId,
+          question,
+          answer_hint: `${productName} について: ${question}`,
+          embedding: `[${embedding.join(",")}]`,
+        };
+      } catch (err) {
+        console.error("[faq precompute] embed failed", err);
+        return null;
+      }
+    })
+  );
+  const valid = rows.filter((r): r is NonNullable<typeof r> => r !== null);
+  if (valid.length === 0) return;
+  await supabase.from("question_cache").insert(valid);
 }

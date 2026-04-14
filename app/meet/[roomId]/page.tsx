@@ -82,11 +82,15 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
     );
   }
 
-  const avatarPipeline: "liveavatar" | "browser_tts" =
-    meeting.avatar_pipeline === "browser_tts" ? "browser_tts" : "liveavatar";
+  const avatarPipeline: "liveavatar" | "browser_tts" | "deepgram_tts" =
+    meeting.avatar_pipeline === "browser_tts"
+      ? "browser_tts"
+      : meeting.avatar_pipeline === "deepgram_tts"
+      ? "deepgram_tts"
+      : "liveavatar";
 
-  // browser_tts mode doesn't need a real HeyGen avatar id, so relax
-  // the "no avatar" error gate when that's what the meeting requests.
+  // Voice-only pipelines don't need a HeyGen avatar id, so only
+  // block the liveavatar pipeline when the avatar is missing.
   if (!heygenAvatarId && avatarPipeline === "liveavatar") {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-6">

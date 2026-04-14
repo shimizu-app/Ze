@@ -5,12 +5,14 @@ import { createClient } from "@/lib/supabase/client";
 import { useHeyGenAvatar } from "./useHeyGenAvatar";
 import { useLiveAvatar } from "./useLiveAvatar";
 import { useBrowserTTS } from "./useBrowserTTS";
+import { useDeepgramTTS } from "./useDeepgramTTS";
 import { useDeepgramSTT } from "./useDeepgramSTT";
 import { useConversationTurns } from "./useConversationTurns";
 import { VideoPanel } from "./VideoPanel";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
 import { ChatHistory } from "./ChatHistory";
+import { pickFiller, pickFillerBucket } from "./fillers";
 
 // Feature flag: when not overridden, drive the meet room with the
 // @heygen/liveavatar-web-sdk pipeline. Set NEXT_PUBLIC_USE_LIVEAVATAR
@@ -27,7 +29,7 @@ interface Props {
   voiceId?: string;
   greeting: string;
   initialHostPaused: boolean;
-  avatarPipeline?: "liveavatar" | "browser_tts";
+  avatarPipeline?: "liveavatar" | "browser_tts" | "deepgram_tts";
 }
 
 export function MeetRoom({
@@ -81,12 +83,14 @@ export function MeetRoom({
 
   const { turns, append, endMeeting } = useConversationTurns({ roomId, enabled: started });
 
-  // Dispatch on the meeting's avatar pipeline. All three hooks share
-  // the same return shape so we can pick one transparently. Only one
-  // hook is actually enabled at a time — the others sit idle.
+  // Dispatch on the meeting's avatar pipeline. All four hooks share
+  // the same { videoRef, status, error, speak } shape so we can pick
+  // one transparently. Only one hook is actually enabled at a time —
+  // the others sit idle.
   const usingLiveAvatar = pipeline === "liveavatar" && USE_LIVEAVATAR;
   const usingHeyGenStreaming = pipeline === "liveavatar" && !USE_LIVEAVATAR;
   const usingBrowserTTS = pipeline === "browser_tts";
+  const usingDeepgramTTS = pipeline === "deepgram_tts";
 
   const heyGen = useHeyGenAvatar({
     roomId,
@@ -101,24 +105,35 @@ export function MeetRoom({
   const browserTTS = useBrowserTTS({
     enabled: started && usingBrowserTTS,
   });
+  const deepgramTTS = useDeepgramTTS({
+    enabled: started && usingDeepgramTTS,
+  });
 
   const videoRef = usingBrowserTTS
     ? browserTTS.videoRef
+    : usingDeepgramTTS
+    ? deepgramTTS.videoRef
     : usingLiveAvatar
     ? liveAvatar.videoRef
     : heyGen.videoRef;
   const avatarStatus = usingBrowserTTS
     ? browserTTS.status
+    : usingDeepgramTTS
+    ? deepgramTTS.status
     : usingLiveAvatar
     ? liveAvatar.status
     : heyGen.status;
   const avatarError = usingBrowserTTS
     ? browserTTS.error
+    : usingDeepgramTTS
+    ? deepgramTTS.error
     : usingLiveAvatar
     ? liveAvatar.error
     : heyGen.error;
   const speak = usingBrowserTTS
     ? browserTTS.speak
+    : usingDeepgramTTS
+    ? deepgramTTS.speak
     : usingLiveAvatar
     ? liveAvatar.speak
     : heyGen.speak;
@@ -150,6 +165,16 @@ export function MeetRoom({
       const requestStart = performance.now();
       let firstChunkAt: number | null = null;
       let firstSpeakAt: number | null = null;
+
+      // Phase 9A.5: Emit a short filler immediately so the user hears
+      // the avatar start reacting before Gemini finishes generating.
+      // We add this both to the audio pipeline (speak) and the subtitle
+      // (aiLatest) so the two stay in sync. HeyGen/LiveAvatar queues
+      // the subsequent streamed sentences behind the filler.
+      const fillerBucket = pickFillerBucket(text);
+      const filler = pickFiller(fillerBucket);
+      setAiLatest(filler);
+      speak(filler);
 
       try {
         const res = await fetch("/api/rag", {
@@ -255,13 +280,42 @@ export function MeetRoom({
   // onstart/onend events; LiveAvatar / HeyGen speak() kicks off a
   // streamed audio track that we don't have an explicit talking
   // signal for yet, so default to false and rely on echo cancellation.
-  const aiSpeaking = usingBrowserTTS ? browserTTS.speaking : false;
+  const aiSpeaking = usingBrowserTTS
+    ? browserTTS.speaking
+    : usingDeepgramTTS
+    ? deepgramTTS.speaking
+    : false;
+
+  // Phase 9B.7: fire /api/learning on interim so Groq can update the
+  // persona / emotion / hot-topics snapshot while the user is still
+  // talking. Debounced to once every 1.2s per unique prefix so we
+  // don't hammer Groq on rapid interim updates.
+  const lastLearningAtRef = useRef<number>(0);
+  const lastLearningTextRef = useRef<string>("");
+  const handleInterim = useCallback(
+    (text: string) => {
+      setUserInterim(text);
+      if (!text || text.length < 8) return;
+      const now = performance.now();
+      if (now - lastLearningAtRef.current < 1200) return;
+      if (text === lastLearningTextRef.current) return;
+      lastLearningAtRef.current = now;
+      lastLearningTextRef.current = text;
+      fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_id: roomId, text }),
+        keepalive: true,
+      }).catch((err) => console.warn("[meet] learning fire failed", err));
+    },
+    [roomId]
+  );
 
   const { status: sttStatus, muted, toggleMute, error: sttError } = useDeepgramSTT({
     roomId,
     enabled: started,
     externalMute: aiSpeaking || thinking,
-    onInterim: setUserInterim,
+    onInterim: handleInterim,
     onFinal: onFinalTranscript,
   });
 

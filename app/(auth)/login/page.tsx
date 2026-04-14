@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleDemo(pipeline: "liveavatar" | "browser_tts") {
+  async function handleDemo(pipeline: "liveavatar" | "browser_tts" | "deepgram_tts") {
     setDemoLoading(true);
     setError(null);
     try {
@@ -125,13 +125,13 @@ export default function LoginPage() {
         <div className="grid grid-cols-2 gap-2 mb-4">
           <button
             type="button"
-            onClick={() => handleDemo("browser_tts")}
+            onClick={() => handleDemo("deepgram_tts")}
             disabled={demoLoading || loading}
             className="px-4 py-3 rounded-2xl border border-green/40 bg-green/10 hover:bg-green/20 text-green font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
           >
             <span className="text-lg">🎧</span>
             <span className="text-xs leading-tight">お試しモード</span>
-            <span className="mono text-[9px] text-green/70">FREE · 音声のみ</span>
+            <span className="mono text-[9px] text-green/70">FREE · 高品質音声</span>
           </button>
           <button
             type="button"

@@ -108,8 +108,15 @@ function pickBusinessAvatar(list: HeyGenAvatar[]): HeyGenAvatar | null {
  */
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  const requestedPipeline =
-    body.pipeline === "browser_tts" ? "browser_tts" : "liveavatar";
+  const pipelineValue =
+    body.pipeline === "browser_tts"
+      ? "browser_tts"
+      : body.pipeline === "deepgram_tts"
+      ? "deepgram_tts"
+      : body.pipeline === "liveavatar"
+      ? "liveavatar"
+      : "deepgram_tts"; // default for お試しモード: Deepgram Aura > browser TTS
+  const requestedPipeline = pipelineValue;
 
   const supabase = createServiceClient();
 
@@ -183,6 +190,39 @@ export async function POST(req: Request) {
       } catch (err) {
         console.error("[demo] embedding seed failed", err);
       }
+
+      // Phase 9D: pre-compute FAQ cache so frequent questions
+      // (料金、機能、セキュリティ、etc.) are already embedded when
+      // the visitor first asks. Fire-and-forget.
+      const faqQuestions = [
+        "料金はいくらですか？",
+        "他社と比べてどうですか？",
+        "導入期間はどのくらいですか？",
+        "セキュリティは大丈夫ですか？",
+        "無料トライアルはありますか？",
+        "どんな業界で使えますか？",
+      ];
+      const faqRows = await Promise.all(
+        faqQuestions.map(async (q) => {
+          try {
+            const e = await geminiEmbed(q);
+            return {
+              account_id: accountId,
+              product_id: product.id,
+              question: q,
+              answer_hint: `Sales AI Lab: ${q}`,
+              embedding: `[${e.join(",")}]`,
+            };
+          } catch (err) {
+            console.error("[demo] faq embed failed", err);
+            return null;
+          }
+        })
+      );
+      const validFaq = faqRows.filter((r): r is NonNullable<typeof r> => r !== null);
+      if (validFaq.length > 0) {
+        await supabase.from("question_cache").insert(validFaq);
+      }
     }
 
     // 5. Pick a HeyGen avatar from the catalog, preferring professional
@@ -197,30 +237,39 @@ export async function POST(req: Request) {
       console.error("[demo] heygen list failed", err);
     }
 
-    // 6. Create the guide avatar (only if we have a HeyGen avatar id).
+    // 6. Create the guide avatar. For deepgram_tts / browser_tts
+    //    pipelines the HeyGen avatar id is optional, but we still
+    //    try to pick one so the avatar row has a valid pointer for
+    //    future プロモード switching. If no id is available, we fall
+    //    back to a placeholder string — the meet room only enforces
+    //    the id when avatar_pipeline === "liveavatar".
     let avatarRowId: string | null = null;
-    if (heygenAvatarId) {
-      const { data: avatarRow } = await supabase
-        .from("avatars")
-        .insert({
-          account_id: accountId,
-          name: "ソラ",
-          heygen_avatar_id: heygenAvatarId,
-          voice_id: process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE || null,
-          role: "explain",
-          voice_tone: "明るく落ち着いた、案内人のような口調",
-          language: "ja",
-          character_notes: "Sales AI Lab のプロダクトガイド。プロフェッショナルだが親しみやすい",
-          product_ids: product?.id ? [product.id] : null,
-          pain_focus: ["営業人員不足", "リード取りこぼし"],
-          strength_order: ["即時応答", "RAG精度", "原因分析"],
-          goal: "無料トライアル登録または個別商談予約",
-          system_prompt: SELF_DEMO_AVATAR_SYSTEM_PROMPT,
-        })
-        .select("id")
-        .single();
-      avatarRowId = avatarRow?.id ?? null;
-    }
+    const scriptLines = [
+      "こんにちは、Sales AI Lab のデモ担当のソラです。",
+      "このアプリ自体について、何でも質問してください。",
+      "まずは気になることから、お気軽にお聞かせください。",
+    ];
+    const { data: avatarRow } = await supabase
+      .from("avatars")
+      .insert({
+        account_id: accountId,
+        name: "ソラ",
+        heygen_avatar_id: heygenAvatarId || "voice-only-placeholder",
+        voice_id: process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE || null,
+        role: "explain",
+        voice_tone: "明るく落ち着いた、案内人のような口調",
+        language: "ja",
+        character_notes: "Sales AI Lab のプロダクトガイド。プロフェッショナルだが親しみやすい",
+        product_ids: product?.id ? [product.id] : null,
+        pain_focus: ["営業人員不足", "リード取りこぼし"],
+        strength_order: ["即時応答", "RAG精度", "原因分析"],
+        goal: "無料トライアル登録または個別商談予約",
+        system_prompt: SELF_DEMO_AVATAR_SYSTEM_PROMPT,
+        script_lines: scriptLines,
+      })
+      .select("id")
+      .single();
+    avatarRowId = avatarRow?.id ?? null;
 
     // 7. Create the demo meeting.
     roomId = randomRoomId();

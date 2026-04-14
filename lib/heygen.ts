@@ -13,6 +13,20 @@ function apiKey() {
   return key;
 }
 
+/**
+ * Key used specifically for LiveAvatar calls (api.liveavatar.com).
+ * Prefers LIVEAVATAR_API_KEY so visitors can swap in a different
+ * LiveAvatar workspace without touching HEYGEN_API_KEY — useful when
+ * testing a second HeyGen account or a dedicated LiveAvatar billing
+ * plan. Falls back to HEYGEN_API_KEY for the common case where both
+ * services share the same key.
+ */
+function liveAvatarKey() {
+  const key = process.env.LIVEAVATAR_API_KEY || process.env.HEYGEN_API_KEY;
+  if (!key) throw new Error("LIVEAVATAR_API_KEY (or HEYGEN_API_KEY) is not set");
+  return key;
+}
+
 export async function createHeyGenSessionToken(): Promise<string> {
   const res = await fetch(`${API_BASE}/v1/streaming.create_token`, {
     method: "POST",
@@ -103,7 +117,7 @@ export async function listHeyGenAvatars(): Promise<HeyGenAvatar[]> {
   // 2) LiveAvatar /v1/avatars/public — this is the supported pipeline now.
   const liveRes = await fetch(
     `https://api.liveavatar.com/v1/avatars/public?page=1&page_size=100`,
-    { headers: { "X-API-KEY": apiKey() } }
+    { headers: { "X-API-KEY": liveAvatarKey() } }
   );
   if (!liveRes.ok) {
     const text = await liveRes.text();

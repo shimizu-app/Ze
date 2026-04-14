@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/service";
 import { MeetRoom } from "@/components/meet/MeetRoom";
+import { SELF_DEMO_GREETING } from "@/lib/seed/sales-ai-lab-knowledge";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,10 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
   let avatarName = "営業アバター";
   let heygenAvatarId = "";
   let voiceId: string | undefined;
-  const greeting = `こんにちは、${meeting.company_name}様。本日はお時間いただきありがとうございます。私がAI営業担当を務めさせていただきます。本日はどのようなことを重点的にお話できればよろしいでしょうか？`;
+  const isSelfDemo = meeting.company_name === "Sales AI Lab Self-Demo";
+  const greeting = isSelfDemo
+    ? SELF_DEMO_GREETING
+    : `こんにちは、${meeting.company_name}様。本日はお時間いただきありがとうございます。私がAI営業担当を務めさせていただきます。本日はどのようなことを重点的にお話できればよろしいでしょうか？`;
 
   // 1) The meeting has an avatar explicitly set.
   if (meeting.avatar_id) {

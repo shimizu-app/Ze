@@ -24,7 +24,11 @@ export default function LoginPage() {
         const { error: msg } = await res.json().catch(() => ({}));
         throw new Error(msg || "デモ環境の作成に失敗しました");
       }
-      const { email: demoEmail, password: demoPassword } = await res.json();
+      const {
+        email: demoEmail,
+        password: demoPassword,
+        room_id: roomId,
+      } = (await res.json()) as { email: string; password: string; room_id: string | null };
 
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: demoEmail,
@@ -32,7 +36,14 @@ export default function LoginPage() {
       });
       if (signInError) throw signInError;
 
-      router.push("/home");
+      // If the demo seeded a self-demo room, drop the visitor straight
+      // into a live conversation with the Sales AI Lab guide. Otherwise
+      // fall back to the empty workspace home.
+      if (roomId) {
+        router.push(`/meet/${roomId}`);
+      } else {
+        router.push("/home");
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "デモ起動に失敗しました");

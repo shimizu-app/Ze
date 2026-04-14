@@ -15,11 +15,15 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleDemo() {
+  async function handleDemo(pipeline: "liveavatar" | "browser_tts") {
     setDemoLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/demo", { method: "POST" });
+      const res = await fetch("/api/auth/demo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipeline }),
+      });
       if (!res.ok) {
         const { error: msg } = await res.json().catch(() => ({}));
         throw new Error(msg || "デモ環境の作成に失敗しました");
@@ -117,16 +121,34 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-white/50 mono">AI AVATAR SALES PLATFORM</p>
         </div>
 
-        {/* Demo button — provisions a throwaway account in one click */}
-        <button
-          type="button"
-          onClick={handleDemo}
-          disabled={demoLoading || loading}
-          className="w-full mb-4 px-5 py-3 rounded-2xl border border-ac/40 bg-ac/10 hover:bg-ac/20 text-ac font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          <span>🚀</span>
-          <span>{demoLoading ? "デモ環境を準備中..." : "デモを今すぐ試す"}</span>
-        </button>
+        {/* Demo buttons — お試しモード (free) vs プロモード (LiveAvatar) */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => handleDemo("browser_tts")}
+            disabled={demoLoading || loading}
+            className="px-4 py-3 rounded-2xl border border-green/40 bg-green/10 hover:bg-green/20 text-green font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
+          >
+            <span className="text-lg">🎧</span>
+            <span className="text-xs leading-tight">お試しモード</span>
+            <span className="mono text-[9px] text-green/70">FREE · 音声のみ</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDemo("liveavatar")}
+            disabled={demoLoading || loading}
+            className="px-4 py-3 rounded-2xl border border-ac/40 bg-ac/10 hover:bg-ac/20 text-ac font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
+          >
+            <span className="text-lg">🎭</span>
+            <span className="text-xs leading-tight">プロモード</span>
+            <span className="mono text-[9px] text-ac/70">PAID · 映像+音声</span>
+          </button>
+        </div>
+        {demoLoading && (
+          <div className="text-center text-xs text-ac/70 mb-4 animate-pulse">
+            デモ環境を準備中...
+          </div>
+        )}
         <div className="text-center text-[10px] text-white/40 mono mb-4">
           OR USE EMAIL
         </div>

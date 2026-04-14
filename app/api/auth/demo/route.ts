@@ -28,7 +28,11 @@ import {
  * Failures past the user creation are non-fatal — we still hand back
  * email/password so the user lands on /home as a safety net.
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const requestedPipeline =
+    body.pipeline === "browser_tts" ? "browser_tts" : "liveavatar";
+
   const supabase = createServiceClient();
 
   const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -149,7 +153,8 @@ export async function POST() {
       product_id: product?.id ?? null,
       status: "waiting",
       mode: "ai_only",
-      note: "Self-demo seeded by /api/auth/demo",
+      avatar_pipeline: requestedPipeline,
+      note: `Self-demo seeded by /api/auth/demo (pipeline=${requestedPipeline})`,
     });
   } catch (err) {
     console.error("[demo] seed pipeline failed", err);

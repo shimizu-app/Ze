@@ -10,7 +10,9 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
 
   const { data: meeting } = await supabase
     .from("meetings")
-    .select("id, room_id, company_name, contact_name, avatar_id, mode, host_paused, account_id")
+    .select(
+      "id, room_id, company_name, contact_name, avatar_id, mode, host_paused, account_id, avatar_pipeline"
+    )
     .eq("room_id", params.roomId)
     .maybeSingle();
 
@@ -64,21 +66,6 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
     voiceId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE;
   }
 
-  if (!heygenAvatarId) {
-    return (
-      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
-        <div className="max-w-lg rounded-2xl border border-amber/40 bg-s1 p-8 text-center">
-          <div className="text-4xl mb-3">⚠️</div>
-          <div className="text-lg font-semibold mb-2">アバター未設定</div>
-          <p className="text-sm text-white/60">
-            この会議にはアバターが紐付いていません。アカウントにアバターを登録してから会議を開いてください。
-          </p>
-          <div className="mono text-[10px] text-white/30 mt-6">ROOM {meeting.room_id}</div>
-        </div>
-      </div>
-    );
-  }
-
   if (meeting.mode !== "ai_only") {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-6">
@@ -95,6 +82,27 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
     );
   }
 
+  const avatarPipeline: "liveavatar" | "browser_tts" =
+    meeting.avatar_pipeline === "browser_tts" ? "browser_tts" : "liveavatar";
+
+  // browser_tts mode doesn't need a real HeyGen avatar id, so relax
+  // the "no avatar" error gate when that's what the meeting requests.
+  if (!heygenAvatarId && avatarPipeline === "liveavatar") {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-amber/40 bg-s1 p-8 text-center">
+          <div className="text-4xl mb-3">⚠️</div>
+          <div className="text-lg font-semibold mb-2">アバター未設定</div>
+          <p className="text-sm text-white/60">
+            プロモード会議にはアバターが必要です。お試しモードで作成するか、
+            アバターを登録してから再度会議を開いてください。
+          </p>
+          <div className="mono text-[10px] text-white/30 mt-6">ROOM {meeting.room_id}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <MeetRoom
       meetingId={meeting.id}
@@ -106,6 +114,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
       voiceId={voiceId}
       greeting={greeting}
       initialHostPaused={Boolean(meeting.host_paused)}
+      avatarPipeline={avatarPipeline}
     />
   );
 }

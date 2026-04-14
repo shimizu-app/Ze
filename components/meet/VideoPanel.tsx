@@ -6,12 +6,51 @@ interface Props {
   status: "idle" | "connecting" | "ready" | "error" | "ended";
   avatarName: string;
   error?: string | null;
+  /** When true, we render a static placeholder avatar instead of expecting a video stream. */
+  voiceOnly?: boolean;
+  /** Pulses the placeholder border when the TTS engine is mid-utterance. */
+  speaking?: boolean;
 }
 
 export const VideoPanel = forwardRef<HTMLVideoElement, Props>(function VideoPanel(
-  { status, avatarName, error },
+  { status, avatarName, error, voiceOnly, speaking },
   ref
 ) {
+  // Voice-only mode renders a big glowing avatar placeholder.
+  if (voiceOnly) {
+    return (
+      <div
+        className={`relative w-full aspect-video rounded-3xl overflow-hidden border glow-ac transition-all ${
+          speaking
+            ? "border-ac bg-gradient-to-br from-ac/20 via-s2 to-s1 shadow-[0_0_60px_rgba(192,96,255,0.45)]"
+            : "border-ac/20 bg-gradient-to-br from-s2 to-s1"
+        }`}
+      >
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="text-center">
+            <div
+              className={`text-8xl mb-4 ${speaking ? "animate-pulse" : ""}`}
+              aria-hidden
+            >
+              🎭
+            </div>
+            <div className="text-2xl font-bold mb-1">{avatarName}</div>
+            <div className="mono text-[10px] text-ac/70">
+              VOICE-ONLY TRIAL
+              {speaking && <span className="ml-2 text-ac">● SPEAKING</span>}
+              {status === "error" && <span className="ml-2 text-red">● ERROR</span>}
+            </div>
+          </div>
+        </div>
+        {status === "error" && error && (
+          <div className="absolute bottom-4 left-4 right-4 mono text-[10px] text-red break-all max-h-20 overflow-y-auto text-left bg-s2/90 p-2 rounded border border-red/30">
+            {error}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full aspect-video rounded-3xl overflow-hidden bg-s2 border border-ac/20 glow-ac">
       <video

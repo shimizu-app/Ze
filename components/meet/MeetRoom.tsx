@@ -4,19 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useHeyGenAvatar } from "./useHeyGenAvatar";
 import { useLiveAvatar } from "./useLiveAvatar";
+import { useBrowserTTS } from "./useBrowserTTS";
 import { useDeepgramSTT } from "./useDeepgramSTT";
 import { useConversationTurns } from "./useConversationTurns";
 import { VideoPanel } from "./VideoPanel";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
-
-// Feature flag: drives the meet room with the @heygen/liveavatar-web-sdk
-// pipeline. Defaults to ON because the legacy HeyGen Streaming Avatar
-// API is sunset and returning 401 on this account. Set
-// NEXT_PUBLIC_USE_LIVEAVATAR=false on Vercel only if you need to fall
-// back to the old streaming SDK for testing.
-const USE_LIVEAVATAR = process.env.NEXT_PUBLIC_USE_LIVEAVATAR !== "false";
 import { ChatHistory } from "./ChatHistory";
+
+// Feature flag: when not overridden, drive the meet room with the
+// @heygen/liveavatar-web-sdk pipeline. Set NEXT_PUBLIC_USE_LIVEAVATAR
+// =false on Vercel to fall back to the old streaming SDK for testing.
+const USE_LIVEAVATAR = process.env.NEXT_PUBLIC_USE_LIVEAVATAR !== "false";
 
 interface Props {
   meetingId: string;
@@ -28,6 +27,7 @@ interface Props {
   voiceId?: string;
   greeting: string;
   initialHostPaused: boolean;
+  avatarPipeline?: "liveavatar" | "browser_tts";
 }
 
 export function MeetRoom({
@@ -40,7 +40,9 @@ export function MeetRoom({
   voiceId,
   greeting,
   initialHostPaused,
+  avatarPipeline = "liveavatar",
 }: Props) {
+  const pipeline = avatarPipeline;
   const [started, setStarted] = useState(false);
   const [userInterim, setUserInterim] = useState("");
   const [aiLatest, setAiLatest] = useState("");
@@ -79,23 +81,47 @@ export function MeetRoom({
 
   const { turns, append, endMeeting } = useConversationTurns({ roomId, enabled: started });
 
-  // Pick the avatar pipeline based on the build-time feature flag.
-  // We instantiate both hooks but only enable one at a time so the
-  // unused pipeline never connects.
+  // Dispatch on the meeting's avatar pipeline. All three hooks share
+  // the same return shape so we can pick one transparently. Only one
+  // hook is actually enabled at a time — the others sit idle.
+  const usingLiveAvatar = pipeline === "liveavatar" && USE_LIVEAVATAR;
+  const usingHeyGenStreaming = pipeline === "liveavatar" && !USE_LIVEAVATAR;
+  const usingBrowserTTS = pipeline === "browser_tts";
+
   const heyGen = useHeyGenAvatar({
     roomId,
     avatarName: heygenAvatarId,
     voiceId,
-    enabled: started && !USE_LIVEAVATAR,
+    enabled: started && usingHeyGenStreaming,
   });
   const liveAvatar = useLiveAvatar({
     roomId,
-    enabled: started && USE_LIVEAVATAR,
+    enabled: started && usingLiveAvatar,
   });
-  const videoRef = USE_LIVEAVATAR ? liveAvatar.videoRef : heyGen.videoRef;
-  const avatarStatus = USE_LIVEAVATAR ? liveAvatar.status : heyGen.status;
-  const avatarError = USE_LIVEAVATAR ? liveAvatar.error : heyGen.error;
-  const speak = USE_LIVEAVATAR ? liveAvatar.speak : heyGen.speak;
+  const browserTTS = useBrowserTTS({
+    enabled: started && usingBrowserTTS,
+  });
+
+  const videoRef = usingBrowserTTS
+    ? browserTTS.videoRef
+    : usingLiveAvatar
+    ? liveAvatar.videoRef
+    : heyGen.videoRef;
+  const avatarStatus = usingBrowserTTS
+    ? browserTTS.status
+    : usingLiveAvatar
+    ? liveAvatar.status
+    : heyGen.status;
+  const avatarError = usingBrowserTTS
+    ? browserTTS.error
+    : usingLiveAvatar
+    ? liveAvatar.error
+    : heyGen.error;
+  const speak = usingBrowserTTS
+    ? browserTTS.speak
+    : usingLiveAvatar
+    ? liveAvatar.speak
+    : heyGen.speak;
 
   // After the avatar connects, greet the guest once.
   const [greeted, setGreeted] = useState(false);
@@ -295,6 +321,8 @@ export function MeetRoom({
               status={avatarStatus}
               avatarName={avatarName}
               error={avatarError}
+              voiceOnly={usingBrowserTTS}
+              speaking={usingBrowserTTS ? browserTTS.speaking : false}
             />
             <SubtitleOverlay userInterim={userInterim} aiLatest={aiLatest} />
             <ControlBar

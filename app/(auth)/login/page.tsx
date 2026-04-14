@@ -22,8 +22,10 @@ export default function LoginPage() {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        router.push("/home");
+        router.refresh();
       } else {
-        // Sign up, create account, link account_id to user metadata
+        // Sign up
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
@@ -31,23 +33,35 @@ export default function LoginPage() {
         if (signUpError) throw signUpError;
         if (!signUpData.user) throw new Error("ユーザー作成に失敗しました");
 
-        const { data: account, error: accountError } = await supabase
-          .from("accounts")
-          .insert({ name: companyName || email.split("@")[0], owner_user_id: signUpData.user.id })
-          .select()
-          .single();
-        if (accountError) throw accountError;
-
-        const { error: updateError } = await supabase.auth.updateUser({
-          data: { account_id: account.id },
+        // Bootstrap account + user_metadata via service_role (bypasses RLS
+        // and works even when email confirmation is enabled).
+        const bootstrapRes = await fetch("/api/auth/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: signUpData.user.id,
+            company_name: companyName,
+          }),
         });
-        if (updateError) throw updateError;
+        if (!bootstrapRes.ok) {
+          const { error: msg } = await bootstrapRes.json().catch(() => ({}));
+          throw new Error(msg || "アカウント作成に失敗しました");
+        }
 
-        // Refresh session so JWT contains updated user_metadata
-        await supabase.auth.refreshSession();
+        if (signUpData.session) {
+          // Email confirmation is off → user is already signed in.
+          // Refresh the session so the new user_metadata.account_id is in the JWT.
+          await supabase.auth.refreshSession();
+          router.push("/home");
+          router.refresh();
+        } else {
+          // Email confirmation is on → tell the user to check their inbox.
+          setError(
+            "登録確認メールを送信しました。メール内のリンクをクリックしてから、再度ログインしてください。"
+          );
+          setMode("login");
+        }
       }
-      router.push("/home");
-      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
     } finally {

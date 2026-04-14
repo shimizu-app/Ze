@@ -68,6 +68,30 @@ export async function GET() {
     return `len=${v.length}`;
   });
 
+  // --- Gemini ListModels raw call — surfaces exactly which models
+  // this API key is authorized for so we can pick a working id.
+  const geminiListCheck = await safeCheck(async () => {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("GEMINI_API_KEY not set");
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`
+    );
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`${res.status} ${txt.slice(0, 200)}`);
+    }
+    const json = (await res.json()) as {
+      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+    };
+    const models = (json.models ?? [])
+      .filter((m) => m.name)
+      .map((m) => ({
+        name: m.name!.replace("models/", ""),
+        methods: m.supportedGenerationMethods ?? [],
+      }));
+    return models;
+  });
+
   // --- HeyGen avatar list (with LiveAvatar fallback)
   const heyGenListCheck = await safeCheck(async () => {
     const list = await listHeyGenAvatars();
@@ -109,6 +133,7 @@ export async function GET() {
       supabase_service_select: serviceCheck,
       gemini_text: geminiTextCheck,
       gemini_embed: geminiEmbedCheck,
+      gemini_models: geminiListCheck,
       heygen_list: heyGenListCheck,
       liveavatar_list: liveAvatarListCheck,
       liveavatar_token: liveAvatarTokenCheck,

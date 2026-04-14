@@ -12,7 +12,34 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleDemo() {
+    setDemoLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/demo", { method: "POST" });
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({}));
+        throw new Error(msg || "デモ環境の作成に失敗しました");
+      }
+      const { email: demoEmail, password: demoPassword } = await res.json();
+
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: demoEmail,
+        password: demoPassword,
+      });
+      if (signInError) throw signInError;
+
+      router.push("/home");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "デモ起動に失敗しました");
+    } finally {
+      setDemoLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -77,6 +104,20 @@ export default function LoginPage() {
             <span className="text-ac">Sales AI Lab</span>
           </h1>
           <p className="mt-2 text-sm text-white/50 mono">AI AVATAR SALES PLATFORM</p>
+        </div>
+
+        {/* Demo button — provisions a throwaway account in one click */}
+        <button
+          type="button"
+          onClick={handleDemo}
+          disabled={demoLoading || loading}
+          className="w-full mb-4 px-5 py-3 rounded-2xl border border-ac/40 bg-ac/10 hover:bg-ac/20 text-ac font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          <span>🚀</span>
+          <span>{demoLoading ? "デモ環境を準備中..." : "デモを今すぐ試す"}</span>
+        </button>
+        <div className="text-center text-[10px] text-white/40 mono mb-4">
+          OR USE EMAIL
         </div>
 
         <form

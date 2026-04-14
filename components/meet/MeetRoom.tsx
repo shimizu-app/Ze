@@ -94,6 +94,7 @@ export function MeetRoom({
   });
   const videoRef = USE_LIVEAVATAR ? liveAvatar.videoRef : heyGen.videoRef;
   const avatarStatus = USE_LIVEAVATAR ? liveAvatar.status : heyGen.status;
+  const avatarError = USE_LIVEAVATAR ? liveAvatar.error : heyGen.error;
   const speak = USE_LIVEAVATAR ? liveAvatar.speak : heyGen.speak;
 
   // After the avatar connects, greet the guest once.
@@ -289,7 +290,12 @@ export function MeetRoom({
 
         <div className="grid md:grid-cols-3 gap-4">
           <div className="md:col-span-2 space-y-4">
-            <VideoPanel ref={videoRef} status={avatarStatus} avatarName={avatarName} />
+            <VideoPanel
+              ref={videoRef}
+              status={avatarStatus}
+              avatarName={avatarName}
+              error={avatarError}
+            />
             <SubtitleOverlay userInterim={userInterim} aiLatest={aiLatest} />
             <ControlBar
               muted={muted}

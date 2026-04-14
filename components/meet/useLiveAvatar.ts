@@ -31,20 +31,33 @@ export function useLiveAvatar({
       setStatus("connecting");
       setError(null);
       try {
+        console.log("[liveavatar] fetching token for room", roomId);
         const tokenRes = await fetch("/api/liveavatar/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ room_id: roomId }),
         });
-        if (!tokenRes.ok) throw new Error("failed to fetch LiveAvatar token");
-        const { session_token } = (await tokenRes.json()) as { session_token: string };
+        if (!tokenRes.ok) {
+          const body = await tokenRes.text();
+          throw new Error(`token fetch ${tokenRes.status}: ${body.slice(0, 300)}`);
+        }
+        const tokenJson = await tokenRes.json();
+        const sessionToken = tokenJson.session_token as string | undefined;
+        if (!sessionToken) {
+          throw new Error(`token response missing session_token: ${JSON.stringify(tokenJson).slice(0, 200)}`);
+        }
+        console.log("[liveavatar] token ok, constructing session", {
+          session_id: tokenJson.session_id,
+        });
 
         if (cancelled) return;
 
-        const session = new LiveAvatarSession(session_token);
+        const session = new LiveAvatarSession(sessionToken);
         sessionRef.current = session;
 
+        console.log("[liveavatar] calling session.start()");
         await session.start();
+        console.log("[liveavatar] session.start() resolved");
         if (cancelled) {
           await session.stop().catch(() => {});
           return;
@@ -52,13 +65,22 @@ export function useLiveAvatar({
 
         if (videoRef.current) {
           session.attach(videoRef.current);
+          console.log("[liveavatar] attached to video element");
+        } else {
+          console.warn("[liveavatar] videoRef not mounted yet; will retry on next render");
         }
 
         setStatus("ready");
       } catch (err) {
         console.error("[liveavatar] start failed", err);
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "unknown");
+          const msg =
+            err instanceof Error
+              ? `${err.name}: ${err.message}`
+              : typeof err === "string"
+              ? err
+              : JSON.stringify(err);
+          setError(msg);
           setStatus("error");
         }
       }

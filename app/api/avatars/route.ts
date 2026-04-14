@@ -60,6 +60,7 @@ export async function POST(req: Request) {
       account_id: accountId,
       name: body.name,
       heygen_avatar_id: body.heygen_avatar_id,
+      voice_id: body.voice_id || null,
       role: body.role,
       voice_tone: body.voice_tone ?? null,
       language: body.language ?? "ja",

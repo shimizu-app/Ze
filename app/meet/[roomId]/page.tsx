@@ -9,7 +9,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
 
   const { data: meeting } = await supabase
     .from("meetings")
-    .select("id, room_id, company_name, contact_name, avatar_id, mode, host_paused")
+    .select("id, room_id, company_name, contact_name, avatar_id, mode, host_paused, account_id")
     .eq("room_id", params.roomId)
     .maybeSingle();
 
@@ -18,19 +18,46 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
   let avatarName = "営業アバター";
   let heygenAvatarId = "";
   let voiceId: string | undefined;
-  let greeting = `こんにちは、${meeting.company_name}様。本日はお時間いただきありがとうございます。私がAI営業担当を務めさせていただきます。本日はどのようなことを重点的にお話できればよろしいでしょうか？`;
+  const greeting = `こんにちは、${meeting.company_name}様。本日はお時間いただきありがとうございます。私がAI営業担当を務めさせていただきます。本日はどのようなことを重点的にお話できればよろしいでしょうか？`;
 
+  // 1) The meeting has an avatar explicitly set.
   if (meeting.avatar_id) {
     const { data: avatar } = await supabase
       .from("avatars")
-      .select("name, heygen_avatar_id, voice_tone, character_notes, goal")
+      .select("name, heygen_avatar_id, voice_id")
       .eq("id", meeting.avatar_id)
       .maybeSingle();
     if (avatar) {
       avatarName = avatar.name ?? avatarName;
       heygenAvatarId = avatar.heygen_avatar_id ?? "";
-      voiceId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE;
+      voiceId = avatar.voice_id ?? undefined;
     }
+  }
+
+  // 2) Fallback: pick the oldest avatar in this account.
+  if (!heygenAvatarId) {
+    const { data: fallback } = await supabase
+      .from("avatars")
+      .select("name, heygen_avatar_id, voice_id")
+      .eq("account_id", meeting.account_id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (fallback) {
+      avatarName = fallback.name ?? avatarName;
+      heygenAvatarId = fallback.heygen_avatar_id ?? "";
+      voiceId = fallback.voice_id ?? undefined;
+    }
+  }
+
+  // 3) Fallback: env-defined default avatar.
+  if (!heygenAvatarId && process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_AVATAR) {
+    heygenAvatarId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_AVATAR;
+  }
+
+  // 4) Fallback voice from env.
+  if (!voiceId && process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE) {
+    voiceId = process.env.NEXT_PUBLIC_HEYGEN_DEFAULT_VOICE;
   }
 
   if (!heygenAvatarId) {
@@ -40,8 +67,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
           <div className="text-4xl mb-3">⚠️</div>
           <div className="text-lg font-semibold mb-2">アバター未設定</div>
           <p className="text-sm text-white/60">
-            この会議にはアバターが紐付いていないか、HeyGen Avatar ID が設定されていません。
-            作成者にお問い合わせください。
+            この会議にはアバターが紐付いていません。アカウントにアバターを登録してから会議を開いてください。
           </p>
           <div className="mono text-[10px] text-white/30 mt-6">ROOM {meeting.room_id}</div>
         </div>

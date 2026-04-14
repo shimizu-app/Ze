@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const STEPS = ["基本", "キャラ", "商材紐付け", "ゴール", "確認"] as const;
@@ -13,6 +13,7 @@ interface Product {
 interface FormState {
   name: string;
   heygen_avatar_id: string;
+  voice_id: string;
   role: "explain" | "sales" | "support";
   voice_tone: string;
   language: string;
@@ -21,6 +22,19 @@ interface FormState {
   pain_focus: string[];
   strength_order: string[];
   goal: string;
+}
+
+interface HeyGenAvatarOption {
+  avatar_id: string;
+  avatar_name: string;
+  gender: string | null;
+  preview_image_url: string | null;
+}
+
+interface HeyGenVoiceOption {
+  voice_id: string;
+  name: string;
+  gender: string | null;
 }
 
 export function AvatarPersonaWizard({
@@ -35,6 +49,7 @@ export function AvatarPersonaWizard({
   const [form, setForm] = useState<FormState>({
     name: "",
     heygen_avatar_id: "",
+    voice_id: "",
     role: "sales",
     voice_tone: "",
     language: "ja",
@@ -46,6 +61,47 @@ export function AvatarPersonaWizard({
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // HeyGen catalog state
+  const [hgAvatars, setHgAvatars] = useState<HeyGenAvatarOption[]>([]);
+  const [hgVoices, setHgVoices] = useState<HeyGenVoiceOption[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [showManualId, setShowManualId] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCatalog() {
+      setCatalogLoading(true);
+      setCatalogError(null);
+      try {
+        const [avatarsRes, voicesRes] = await Promise.all([
+          fetch("/api/heygen/avatars").then((r) => r.json()),
+          fetch("/api/heygen/voices?lang=ja").then((r) => r.json()),
+        ]);
+        if (cancelled) return;
+        if (avatarsRes.error) {
+          setCatalogError(avatarsRes.error);
+          setShowManualId(true);
+        } else {
+          setHgAvatars(avatarsRes.avatars ?? []);
+        }
+        if (!voicesRes.error) {
+          setHgVoices(voicesRes.voices ?? []);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setCatalogError(err instanceof Error ? err.message : "load failed");
+        setShowManualId(true);
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    }
+    loadCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -102,17 +158,126 @@ export function AvatarPersonaWizard({
               <input
                 value={form.name}
                 onChange={(e) => update("name", e.target.value)}
+                placeholder="例: ハルカ"
                 className="input"
               />
             </Field>
-            <Field label="HeyGen Avatar ID *">
-              <input
-                value={form.heygen_avatar_id}
-                onChange={(e) => update("heygen_avatar_id", e.target.value)}
-                placeholder="HeyGen の Streaming Avatar ID"
-                className="input mono"
-              />
+
+            <Field label="HeyGen アバター *">
+              {catalogLoading && (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="aspect-[3/4] rounded-lg bg-s2 border border-white/5 animate-pulse"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {!catalogLoading && !showManualId && hgAvatars.length > 0 && (
+                <>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[320px] overflow-y-auto pr-1">
+                    {hgAvatars.map((a) => {
+                      const selected = form.heygen_avatar_id === a.avatar_id;
+                      return (
+                        <button
+                          key={a.avatar_id}
+                          type="button"
+                          onClick={() => update("heygen_avatar_id", a.avatar_id)}
+                          className={`relative aspect-[3/4] rounded-lg overflow-hidden border-2 transition ${
+                            selected
+                              ? "border-ac glow-ac"
+                              : "border-white/10 hover:border-white/30"
+                          }`}
+                        >
+                          {a.preview_image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={a.preview_image_url}
+                              alt={a.avatar_name}
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center bg-s2 text-3xl">
+                              🎭
+                            </div>
+                          )}
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-1.5">
+                            <div className="text-[10px] text-white truncate">{a.avatar_name}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualId(true)}
+                    className="text-xs text-white/40 hover:text-white/60 mt-2 mono"
+                  >
+                    または ID を手動入力 →
+                  </button>
+                </>
+              )}
+
+              {!catalogLoading && !showManualId && hgAvatars.length === 0 && !catalogError && (
+                <div className="rounded-lg border border-dashed border-white/15 p-6 text-center text-xs text-white/50">
+                  HeyGen アカウントに使用可能なアバターがありません。
+                  HeyGen ダッシュボードでアバターを作成してから戻ってきてください。
+                </div>
+              )}
+
+              {showManualId && (
+                <>
+                  {catalogError && (
+                    <div className="text-[11px] text-amber mb-2">
+                      HeyGen 取得失敗: {catalogError}
+                    </div>
+                  )}
+                  <input
+                    value={form.heygen_avatar_id}
+                    onChange={(e) => update("heygen_avatar_id", e.target.value)}
+                    placeholder="HeyGen Avatar ID を直接入力"
+                    className="input mono"
+                  />
+                  {!catalogError && hgAvatars.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowManualId(false)}
+                      className="text-xs text-white/40 hover:text-white/60 mt-2 mono"
+                    >
+                      ← ピッカーに戻る
+                    </button>
+                  )}
+                </>
+              )}
             </Field>
+
+            <Field label="ボイス">
+              {hgVoices.length > 0 ? (
+                <select
+                  value={form.voice_id}
+                  onChange={(e) => update("voice_id", e.target.value)}
+                  className="input"
+                >
+                  <option value="">-- デフォルト --</option>
+                  {hgVoices.map((v) => (
+                    <option key={v.voice_id} value={v.voice_id}>
+                      {v.name}
+                      {v.gender ? ` (${v.gender})` : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={form.voice_id}
+                  onChange={(e) => update("voice_id", e.target.value)}
+                  placeholder="HeyGen voice ID（任意）"
+                  className="input mono"
+                />
+              )}
+            </Field>
+
             <Field label="役割">
               <div className="flex gap-2">
                 {(["explain", "sales", "support"] as const).map((r) => (

@@ -18,7 +18,7 @@ export async function geminiEmbed(text: string): Promise<number[]> {
   return result.embedding.values;
 }
 
-const MODEL = "gemini-2.0-flash";
+const MODEL = "gemini-1.5-flash";
 
 /**
  * Generate a text completion using Gemini 2.0 Flash.

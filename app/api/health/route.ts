@@ -3,8 +3,19 @@ import { createClient } from "@supabase/supabase-js";
 import { geminiGenerate, geminiEmbed } from "@/lib/gemini";
 import { listHeyGenAvatars } from "@/lib/heygen";
 import { listLiveAvatars, createLiveAvatarSessionToken } from "@/lib/liveavatar";
+import { groqChat } from "@/lib/groq";
+import { auraSpeak } from "@/lib/deepgram-tts";
+import { classifyIntent } from "@/lib/classify";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Marker bumped every time Phase changes. Makes it trivial to tell
+ * from /api/health whether a given Vercel deploy actually contains
+ * the latest code. If this doesn't say "phase9" in the response, the
+ * deployment is stale.
+ */
+const PHASE_MARKER = "phase9-latency-optimization";
 
 function prefix(val: string | undefined, n: number) {
   if (!val) return null;
@@ -56,6 +67,37 @@ export async function GET() {
     }
   }
 
+  // --- Phase 9 specific: new service pings
+  const groqCheck = await safeCheck(async () => {
+    const out = await groqChat(
+      [
+        { role: "system", content: "返答は一言で。" },
+        { role: "user", content: "テスト" },
+      ],
+      { max_tokens: 32 }
+    );
+    return out.slice(0, 40);
+  });
+
+  const deepgramTtsCheck = await safeCheck(async () => {
+    const { audio, contentType } = await auraSpeak("テスト", {
+      model: process.env.DEEPGRAM_TTS_MODEL || "aura-2-sakura-ja",
+    });
+    return `bytes=${audio.byteLength}, ct=${contentType}`;
+  });
+
+  const classifyTests = [
+    { text: "はい", expected: "light" },
+    { text: "料金はいくらですか？", expected: "heavy" },
+    { text: "ちょっと教えてください", expected: "light" },
+    { text: "セキュリティはどうなってますか？", expected: "heavy" },
+  ].map((t) => ({
+    input: t.text,
+    expected: t.expected,
+    got: classifyIntent(t.text),
+    pass: classifyIntent(t.text) === t.expected,
+  }));
+
   // --- Gemini text generation ping
   const geminiTextCheck = await safeCheck(async () => {
     const res = await geminiGenerate("テスト");
@@ -66,30 +108,6 @@ export async function GET() {
   const geminiEmbedCheck = await safeCheck(async () => {
     const v = await geminiEmbed("テスト");
     return `len=${v.length}`;
-  });
-
-  // --- Gemini ListModels raw call — surfaces exactly which models
-  // this API key is authorized for so we can pick a working id.
-  const geminiListCheck = await safeCheck(async () => {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY not set");
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`
-    );
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`${res.status} ${txt.slice(0, 200)}`);
-    }
-    const json = (await res.json()) as {
-      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
-    };
-    const models = (json.models ?? [])
-      .filter((m) => m.name)
-      .map((m) => ({
-        name: m.name!.replace("models/", ""),
-        methods: m.supportedGenerationMethods ?? [],
-      }));
-    return models;
   });
 
   // --- HeyGen avatar list (with LiveAvatar fallback)
@@ -118,6 +136,7 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
+    phase: PHASE_MARKER,
     ts: new Date().toISOString(),
     env: {
       supabase_url: url ?? null,
@@ -127,13 +146,17 @@ export async function GET() {
       heygen_prefix: prefix(process.env.HEYGEN_API_KEY, 10),
       liveavatar_prefix: prefix(process.env.LIVEAVATAR_API_KEY, 10),
       deepgram_prefix: prefix(process.env.DEEPGRAM_API_KEY, 10),
+      groq_prefix: prefix(process.env.GROQ_API_KEY, 10),
+      deepgram_tts_model: process.env.DEEPGRAM_TTS_MODEL || "aura-2-sakura-ja (default)",
     },
     checks: {
       supabase_anon_auth: anonCheck,
       supabase_service_select: serviceCheck,
       gemini_text: geminiTextCheck,
       gemini_embed: geminiEmbedCheck,
-      gemini_models: geminiListCheck,
+      groq_chat: groqCheck,
+      deepgram_tts: deepgramTtsCheck,
+      intent_classifier: classifyTests,
       heygen_list: heyGenListCheck,
       liveavatar_list: liveAvatarListCheck,
       liveavatar_token: liveAvatarTokenCheck,

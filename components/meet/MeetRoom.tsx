@@ -87,10 +87,19 @@ export function MeetRoom({
   // the same { videoRef, status, error, speak } shape so we can pick
   // one transparently. Only one hook is actually enabled at a time —
   // the others sit idle.
-  const usingLiveAvatar = pipeline === "liveavatar" && USE_LIVEAVATAR;
-  const usingHeyGenStreaming = pipeline === "liveavatar" && !USE_LIVEAVATAR;
-  const usingBrowserTTS = pipeline === "browser_tts";
-  const usingDeepgramTTS = pipeline === "deepgram_tts";
+  //
+  // Runtime fallback: if the meeting asked for deepgram_tts but the
+  // client hook reports an error (Deepgram INSUFFICIENT_PERMISSIONS
+  // for aura-2-sakura-ja, network outage, etc.), we quietly switch
+  // to browser_tts so the visitor still hears audio instead of a
+  // dead page. Tracked via deepgramFailed state.
+  const [deepgramFailed, setDeepgramFailed] = useState(false);
+  const effectivePipeline = pipeline === "deepgram_tts" && deepgramFailed ? "browser_tts" : pipeline;
+
+  const usingLiveAvatar = effectivePipeline === "liveavatar" && USE_LIVEAVATAR;
+  const usingHeyGenStreaming = effectivePipeline === "liveavatar" && !USE_LIVEAVATAR;
+  const usingBrowserTTS = effectivePipeline === "browser_tts";
+  const usingDeepgramTTS = effectivePipeline === "deepgram_tts";
 
   const heyGen = useHeyGenAvatar({
     roomId,
@@ -108,6 +117,16 @@ export function MeetRoom({
   const deepgramTTS = useDeepgramTTS({
     enabled: started && usingDeepgramTTS,
   });
+
+  // If Deepgram TTS reports an error, flip the fallback switch so
+  // the next render picks browserTTS instead. This kicks in on the
+  // first failed /api/deepgram-tts request.
+  useEffect(() => {
+    if (pipeline === "deepgram_tts" && deepgramTTS.error && !deepgramFailed) {
+      console.warn("[meet] deepgram_tts unavailable, falling back to browser_tts", deepgramTTS.error);
+      setDeepgramFailed(true);
+    }
+  }, [pipeline, deepgramTTS.error, deepgramFailed]);
 
   const videoRef = usingBrowserTTS
     ? browserTTS.videoRef

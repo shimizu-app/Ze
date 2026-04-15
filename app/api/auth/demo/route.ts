@@ -116,7 +116,21 @@ export async function POST(req: Request) {
       : body.pipeline === "liveavatar"
       ? "liveavatar"
       : "deepgram_tts"; // default for お試しモード: Deepgram Aura > browser TTS
-  const requestedPipeline = pipelineValue;
+
+  // Phase 9: if the caller asked for deepgram_tts (or the default
+  // landed on it), run a quick Aura probe to confirm this account
+  // has access to the Japanese voice. If not, silently fall back
+  // to browser_tts so the visitor still gets audio.
+  let requestedPipeline: "liveavatar" | "browser_tts" | "deepgram_tts" = pipelineValue;
+  if (requestedPipeline === "deepgram_tts") {
+    try {
+      const { auraSpeak } = await import("@/lib/deepgram-tts");
+      await auraSpeak("テスト");
+    } catch (err) {
+      console.warn("[demo] deepgram_tts probe failed, falling back to browser_tts", err);
+      requestedPipeline = "browser_tts";
+    }
+  }
 
   const supabase = createServiceClient();
 

@@ -21,6 +21,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
   let avatarName = "営業アバター";
   let heygenAvatarId = "";
   let voiceId: string | undefined;
+  let scriptLines: string[] = [];
   const isSelfDemo = meeting.company_name === "Sales AI Lab Self-Demo";
   const greeting = isSelfDemo
     ? SELF_DEMO_GREETING
@@ -30,13 +31,16 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
   if (meeting.avatar_id) {
     const { data: avatar } = await supabase
       .from("avatars")
-      .select("name, heygen_avatar_id, voice_id")
+      .select("name, heygen_avatar_id, voice_id, script_lines")
       .eq("id", meeting.avatar_id)
       .maybeSingle();
     if (avatar) {
       avatarName = avatar.name ?? avatarName;
       heygenAvatarId = avatar.heygen_avatar_id ?? "";
       voiceId = avatar.voice_id ?? undefined;
+      scriptLines = Array.isArray(avatar.script_lines)
+        ? (avatar.script_lines as string[])
+        : [];
     }
   }
 
@@ -44,7 +48,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
   if (!heygenAvatarId) {
     const { data: fallback } = await supabase
       .from("avatars")
-      .select("name, heygen_avatar_id, voice_id")
+      .select("name, heygen_avatar_id, voice_id, script_lines")
       .eq("account_id", meeting.account_id)
       .order("created_at", { ascending: true })
       .limit(1)
@@ -53,6 +57,9 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
       avatarName = fallback.name ?? avatarName;
       heygenAvatarId = fallback.heygen_avatar_id ?? "";
       voiceId = fallback.voice_id ?? undefined;
+      scriptLines = Array.isArray(fallback.script_lines)
+        ? (fallback.script_lines as string[])
+        : [];
     }
   }
 
@@ -119,6 +126,7 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
       greeting={greeting}
       initialHostPaused={Boolean(meeting.host_paused)}
       avatarPipeline={avatarPipeline}
+      scriptLines={scriptLines}
     />
   );
 }

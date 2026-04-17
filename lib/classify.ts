@@ -94,3 +94,92 @@ export function classifyIntent(text: string, ctx: ClassifyContext = {}): Intent 
   // Default: treat anything longer or ambiguous as heavy.
   return "heavy";
 }
+
+// =============================================================================
+// Phase 10: conversation-phase aware routing
+// =============================================================================
+
+export type ConversationPhase =
+  | "opening"   // 台本フェーズ。avatars.script_lines を順に発話 (LLM コール 0)
+  | "discovery" // ヒアリング。intent に応じて Groq / Gemini を分ける
+  | "pitch"     // 商品説明。常に Gemini で短めに
+  | "objection" // 反論対応。常に Gemini で長めに、共感ベース
+  | "closing";  // クロージング。常に Gemini で次アクション提示
+
+const OBJECTION_KEYWORDS = /(高い|難しい|不安|困る|ちょっと|検討|別の|考え|やめて|まだ|無理|厳しい|心配|疑問)/;
+const CLOSING_KEYWORDS = /(トライアル|試し|次|申込|契約|デモ|登録|始め|取り組み|前向き|やってみ|お願い|決め)/;
+
+export interface DetectPhaseArgs {
+  /** Total user-side turn count so far (0 indexed = brand new meeting). */
+  turnCount: number;
+  /** How many script_lines remain unspoken. While >0 we stay in opening. */
+  scriptLinesRemaining: number;
+  /** Concatenated text of the most recent few user utterances. */
+  recentUserText: string;
+}
+
+/**
+ * Decide which conversation phase the meeting is currently in. The
+ * router is rule-based on purpose so it adds 0ms latency:
+ *
+ *   1. script_lines remaining  → opening
+ *   2. objection keywords      → objection (overrides everything below)
+ *   3. closing keywords        → closing
+ *   4. early turns (<4)        → discovery
+ *   5. mid turns (4-11)        → pitch
+ *   6. long meeting (12+)      → closing (assume the visitor is winding down)
+ */
+export function detectPhase(args: DetectPhaseArgs): ConversationPhase {
+  if (args.scriptLinesRemaining > 0) return "opening";
+
+  const t = args.recentUserText ?? "";
+  if (OBJECTION_KEYWORDS.test(t)) return "objection";
+  if (CLOSING_KEYWORDS.test(t)) return "closing";
+
+  if (args.turnCount < 4) return "discovery";
+  if (args.turnCount < 12) return "pitch";
+  return "closing";
+}
+
+export interface PhaseRouting {
+  intent: Intent;
+  /** Hard cap on Gemini / Groq output tokens. Keeps replies snappy. */
+  maxTokens: number;
+}
+
+/**
+ * Combine intent classification with the conversation phase to pick
+ * which LLM bucket to use AND how long the response is allowed to be.
+ *
+ * - opening   → script (台本固定, 0 LLM)
+ * - discovery → light/heavy as classified, short cap (40 / 100 tokens)
+ * - pitch     → forced heavy, medium cap (120 tokens)
+ * - objection → forced heavy, long cap (200 tokens) — empathy + push-back
+ * - closing   → forced heavy, medium cap (120 tokens)
+ *
+ * Defaulting heavy in the substantive phases means we never accidentally
+ * route a "may I ask about pricing?" through Groq just because it's
+ * short — the phase wins.
+ */
+export function classifyWithPhase(
+  text: string,
+  phase: ConversationPhase
+): PhaseRouting {
+  const baseIntent = classifyIntent(text);
+
+  switch (phase) {
+    case "opening":
+      return { intent: "script", maxTokens: 60 };
+    case "discovery":
+      return {
+        intent: baseIntent,
+        maxTokens: baseIntent === "light" ? 40 : 100,
+      };
+    case "pitch":
+      return { intent: "heavy", maxTokens: 120 };
+    case "objection":
+      return { intent: "heavy", maxTokens: 200 };
+    case "closing":
+      return { intent: "heavy", maxTokens: 120 };
+  }
+}

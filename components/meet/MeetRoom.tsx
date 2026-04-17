@@ -30,6 +30,12 @@ interface Props {
   greeting: string;
   initialHostPaused: boolean;
   avatarPipeline?: "liveavatar" | "browser_tts" | "deepgram_tts";
+  /**
+   * Phase 10: scripted opening lines. While there are still lines
+   * unspoken, /api/rag returns the next one without calling any LLM
+   * (intent === "script", 0ms latency).
+   */
+  scriptLines?: string[];
 }
 
 export function MeetRoom({
@@ -43,8 +49,14 @@ export function MeetRoom({
   greeting,
   initialHostPaused,
   avatarPipeline = "liveavatar",
+  scriptLines = [],
 }: Props) {
   const pipeline = avatarPipeline;
+
+  // Phase 10: track how many opening script lines remain. Each "script"
+  // intent response consumes one line. When 0, the router naturally
+  // transitions to discovery / pitch / objection / closing phases.
+  const [scriptLinesRemaining, setScriptLinesRemaining] = useState<number>(scriptLines.length);
   const [started, setStarted] = useState(false);
   const [userInterim, setUserInterim] = useState("");
   const [aiLatest, setAiLatest] = useState("");
@@ -196,6 +208,7 @@ export function MeetRoom({
       speak(filler);
 
       try {
+        const userTurnCount = turns.filter((t) => t.role === "user").length;
         const res = await fetch("/api/rag", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -204,6 +217,10 @@ export function MeetRoom({
             user_text: text,
             history: turns.map((t) => ({ role: t.role, text: t.text })),
             stream: true,
+            // Phase 10 fields
+            turn_count: userTurnCount,
+            script_lines: scriptLines,
+            script_lines_remaining: scriptLinesRemaining,
           }),
         });
         if (!res.ok || !res.body) throw new Error("rag failed");
@@ -257,7 +274,15 @@ export function MeetRoom({
             if (!frame.startsWith("data:")) continue;
             try {
               const payload = JSON.parse(frame.replace(/^data:\s*/, ""));
-              if (payload.type === "chunk" && typeof payload.text === "string") {
+              if (payload.type === "meta") {
+                console.log("[meet] phase=", payload.phase, "intent=", payload.intent, "max_tokens=", payload.max_tokens);
+                // Phase 10: when /api/rag is going to play a script line,
+                // burn one off our remaining counter so the next turn
+                // moves on to the next line (or transitions phase).
+                if (payload.intent === "script") {
+                  setScriptLinesRemaining((prev) => Math.max(0, prev - 1));
+                }
+              } else if (payload.type === "chunk" && typeof payload.text === "string") {
                 if (firstChunkAt === null) firstChunkAt = performance.now();
                 fullText += payload.text;
                 pendingSentenceBuffer += payload.text;

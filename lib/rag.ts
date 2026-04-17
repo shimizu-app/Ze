@@ -248,17 +248,25 @@ export async function generateAvatarResponse({
  * If a prefetched embedding is supplied we skip the geminiEmbed() call
  * entirely — the interim-handler on the client will have fired the
  * embedding request while the user was still speaking.
+ *
+ * Phase 10: maxOutputTokens lets the caller clamp Gemini's reply to
+ * the per-phase budget (40 / 100 / 120 / 200 etc.). cachedContent
+ * forwards the paid-tier CachedContent name when available.
  */
 export async function* generateAvatarResponseStream({
   userText,
   history,
   context,
   prefetchedEmbedding,
+  maxOutputTokens,
+  cachedContent,
 }: {
   userText: string;
   history: TurnMessage[];
   context: RagContext;
   prefetchedEmbedding?: number[];
+  maxOutputTokens?: number;
+  cachedContent?: string;
 }): AsyncGenerator<string> {
   const supabase = createServiceClient();
 
@@ -284,7 +292,7 @@ export async function* generateAvatarResponseStream({
   const prompt = buildRagPrompt({ userText, history, context, retrieved });
 
   try {
-    for await (const chunk of geminiGenerateStream(prompt)) {
+    for await (const chunk of geminiGenerateStream(prompt, { maxOutputTokens, cachedContent })) {
       yield chunk;
     }
   } catch (err) {

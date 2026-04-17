@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * the latest code. If this doesn't say "phase9" in the response, the
  * deployment is stale.
  */
-const PHASE_MARKER = "phase9-latency-optimization";
+const PHASE_MARKER = "phase10-conversation-phase-router";
 
 function prefix(val: string | undefined, n: number) {
   if (!val) return null;
@@ -134,6 +134,35 @@ export async function GET() {
     return `session_id=${tok.session_id.slice(0, 8)}...`;
   });
 
+  // --- Gemini paid tier burst test
+  // Free tier: ~15 RPM. Paid tier: 1000+ RPM.
+  // Fire 5 quick calls; if any 429s, the key is on the free tier.
+  const geminiPaidCheck = await safeCheck(async () => {
+    const start = Date.now();
+    let success = 0;
+    let rateLimited = false;
+    for (let i = 0; i < 5; i++) {
+      try {
+        await geminiGenerate(`ping ${i}`, { maxOutputTokens: 8 });
+        success++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        if (/429|RESOURCE_EXHAUSTED|quota/i.test(msg)) {
+          rateLimited = true;
+          break;
+        }
+        throw err;
+      }
+    }
+    const elapsed = Date.now() - start;
+    return {
+      successful_calls: success,
+      rate_limited: rateLimited,
+      elapsed_ms: elapsed,
+      likely_tier: rateLimited ? "free" : "paid",
+    };
+  });
+
   return NextResponse.json({
     ok: true,
     phase: PHASE_MARKER,
@@ -154,6 +183,7 @@ export async function GET() {
       supabase_service_select: serviceCheck,
       gemini_text: geminiTextCheck,
       gemini_embed: geminiEmbedCheck,
+      gemini_paid_tier: geminiPaidCheck,
       groq_chat: groqCheck,
       deepgram_tts: deepgramTtsCheck,
       intent_classifier: classifyTests,

@@ -195,9 +195,9 @@ export function buildRagPrompt({
       ? `# 参考ドキュメント\n${retrieved.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")}`
       : "";
 
-  // Phase 9C: history 10 → 5 turns
+  // Phase 10.2: history 5 → 8 turns (10→5 was too aggressive, lost context)
   const historyBlock = history
-    .slice(-5)
+    .slice(-8)
     .map((t) => `${t.role === "user" ? "相手" : "あなた"}: ${t.text}`)
     .join("\n");
 

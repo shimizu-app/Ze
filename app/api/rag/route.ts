@@ -196,16 +196,37 @@ async function* streamLightResponse({
 }): AsyncGenerator<string> {
   const avatarName = context.avatar?.name ?? "営業担当";
   const goal = context.avatar?.goal ?? "自然な商談";
+  const productName = context.product?.name ?? "";
+  const productStrengths = context.product?.strengths ?? "";
 
-  const charCap = Math.max(20, Math.round(maxTokens * 0.7));
+  // Phase 10.2: Groq needs enough persona + product context to hold
+  // a coherent conversation. Previously it had zero knowledge and
+  // gave generic answers. We inject avatar personality + product
+  // basics while keeping the prompt short enough for <100ms latency.
+  const avatarPersona = context.avatar?.system_prompt
+    ? context.avatar.system_prompt.slice(0, 300)
+    : `プロフェッショナルだが親しみやすい営業担当。落ち着いた口調で話す。`;
+
+  const charCap = Math.max(40, Math.round(maxTokens * 0.8));
   const system = `あなたは${avatarName}というAI営業アバターです。
-会話のゴール: ${goal}
-現在のフェーズ: ${phase}
-返答は1〜2文以内、${charCap}文字以内。自然で親しみやすい日本語。
-前置き禁止、絵文字禁止。`;
+
+# あなたのキャラクター
+${avatarPersona}
+
+# 担当商材
+${productName ? `名前: ${productName}` : "未設定"}
+${productStrengths ? `強み: ${productStrengths}` : ""}
+
+# ルール
+- 会話のゴール: ${goal}
+- 現在のフェーズ: ${phase}
+- 返答は1〜2文以内、${charCap}文字以内
+- 自然で親しみやすい日本語
+- 前置き禁止、絵文字禁止
+- 知らないことは「詳しくは担当からご説明します」と言う`;
 
   const historyLines = history
-    .slice(-4)
+    .slice(-6)
     .map((t) => `${t.role === "user" ? "相手" : "あなた"}: ${t.text}`)
     .join("\n");
 

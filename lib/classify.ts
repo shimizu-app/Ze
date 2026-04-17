@@ -55,7 +55,7 @@ const HEAVY_KEYWORDS = [
   "サポート", "問い合わせ", "対応時間", "SLA",
 ];
 
-const SHORT_THRESHOLD = 15; // chars
+const SHORT_THRESHOLD = 8; // Phase 10.2: tighten so only truly trivial acks go to Groq
 
 export interface ClassifyContext {
   /** True while the conversation is still playing a scripted opening / closing. */
@@ -173,7 +173,7 @@ export function classifyWithPhase(
     case "discovery":
       return {
         intent: baseIntent,
-        maxTokens: baseIntent === "light" ? 40 : 100,
+        maxTokens: baseIntent === "light" ? 80 : 100, // Phase 10.2: 40→80 so Groq can finish sentences
       };
     case "pitch":
       return { intent: "heavy", maxTokens: 120 };

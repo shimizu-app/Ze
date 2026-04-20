@@ -169,17 +169,17 @@ export function classifyWithPhase(
 
   switch (phase) {
     case "opening":
-      return { intent: "script", maxTokens: 60 };
+      return { intent: "script", maxTokens: 80 };
     case "discovery":
       return {
         intent: baseIntent,
-        maxTokens: baseIntent === "light" ? 80 : 100, // Phase 10.2: 40→80 so Groq can finish sentences
+        maxTokens: baseIntent === "light" ? 120 : 200,
       };
     case "pitch":
-      return { intent: "heavy", maxTokens: 120 };
+      return { intent: "heavy", maxTokens: 250 };
     case "objection":
-      return { intent: "heavy", maxTokens: 200 };
+      return { intent: "heavy", maxTokens: 300 };
     case "closing":
-      return { intent: "heavy", maxTokens: 120 };
+      return { intent: "heavy", maxTokens: 200 };
   }
 }

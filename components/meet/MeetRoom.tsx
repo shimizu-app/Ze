@@ -330,6 +330,20 @@ export function MeetRoom({
     ? deepgramTTS.speaking
     : false;
 
+  // Phase 10.3: post-speech echo buffer. After the avatar finishes
+  // speaking, keep the mic muted for 1.5 seconds so residual echo
+  // from the speakers doesn't get picked up by Deepgram and trigger
+  // a feedback loop (the greeting echo was the #1 reported issue).
+  const [postSpeechBuffer, setPostSpeechBuffer] = useState(false);
+  useEffect(() => {
+    if (aiSpeaking || thinking) {
+      setPostSpeechBuffer(true);
+    } else if (postSpeechBuffer) {
+      const timer = setTimeout(() => setPostSpeechBuffer(false), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [aiSpeaking, thinking, postSpeechBuffer]);
+
   // Phase 9B.7: fire /api/learning on interim so Groq can update the
   // persona / emotion / hot-topics snapshot while the user is still
   // talking. Debounced to once every 1.2s per unique prefix so we
@@ -358,7 +372,7 @@ export function MeetRoom({
   const { status: sttStatus, muted, toggleMute, error: sttError } = useDeepgramSTT({
     roomId,
     enabled: started,
-    externalMute: aiSpeaking || thinking,
+    externalMute: aiSpeaking || thinking || postSpeechBuffer,
     onInterim: handleInterim,
     onFinal: onFinalTranscript,
   });

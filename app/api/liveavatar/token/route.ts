@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createLiveAvatarSessionToken } from "@/lib/liveavatar";
+import { createLiveAvatarSessionToken, listLiveAvatars } from "@/lib/liveavatar";
 
 export const dynamic = "force-dynamic";
+
+// LiveAvatar requires UUID-format avatar IDs. HeyGen's v2 catalog
+// returns string IDs like "Abigail_expressive_2024112501" which
+// LiveAvatar rejects with a 422. This regex detects non-UUID IDs
+// so we can fall back to the LiveAvatar public catalog.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * POST /api/liveavatar/token
@@ -60,9 +66,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "no avatar configured" }, { status: 400 });
   }
 
+  // If the stored avatar ID is a HeyGen string (not a UUID), it won't
+  // work with LiveAvatar. Look up a matching LiveAvatar avatar instead.
+  let liveAvatarId = heygenAvatarId;
+  if (!UUID_RE.test(heygenAvatarId)) {
+    console.warn(
+      `[liveavatar token] avatar_id "${heygenAvatarId}" is not a UUID, picking from LiveAvatar catalog`
+    );
+    try {
+      const avatars = await listLiveAvatars();
+      if (avatars.length > 0) {
+        // Try to find one with a similar name, otherwise pick the first active one.
+        const byName = avatars.find(
+          (a) => a.name.toLowerCase().includes(heygenAvatarId.split("_")[0].toLowerCase())
+        );
+        liveAvatarId = byName?.id ?? avatars[0].id;
+        if (byName) {
+          console.log(`[liveavatar token] matched "${heygenAvatarId}" → "${byName.name}" (${byName.id})`);
+        } else {
+          console.log(`[liveavatar token] no name match, using first: "${avatars[0].name}" (${avatars[0].id})`);
+        }
+      }
+    } catch (err) {
+      console.error("[liveavatar token] catalog lookup failed", err);
+    }
+  }
+
   try {
     const token = await createLiveAvatarSessionToken({
-      avatar_id: heygenAvatarId,
+      avatar_id: liveAvatarId,
       voice_id: voiceId,
       language: "ja",
     });

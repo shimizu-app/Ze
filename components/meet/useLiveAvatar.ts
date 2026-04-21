@@ -32,16 +32,28 @@ export function useLiveAvatar({
       setError(null);
       try {
         console.log("[liveavatar] fetching token for room", roomId);
-        const tokenRes = await fetch("/api/liveavatar/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room_id: roomId }),
-        });
-        if (!tokenRes.ok) {
+        // Retry up to 3 times — LiveAvatar occasionally returns 503
+        // (DNS cache overflow) on the first attempt.
+        let tokenJson: Record<string, unknown> | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const tokenRes = await fetch("/api/liveavatar/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ room_id: roomId }),
+          });
+          if (tokenRes.ok) {
+            tokenJson = await tokenRes.json();
+            break;
+          }
           const body = await tokenRes.text();
+          if (tokenRes.status >= 500 && attempt < 3) {
+            console.warn(`[liveavatar] token attempt ${attempt} failed (${tokenRes.status}), retrying...`);
+            await new Promise((r) => setTimeout(r, attempt * 1500));
+            continue;
+          }
           throw new Error(`token fetch ${tokenRes.status}: ${body.slice(0, 300)}`);
         }
-        const tokenJson = await tokenRes.json();
+        if (!tokenJson) throw new Error("token fetch failed after retries");
         const sessionToken = tokenJson.session_token as string | undefined;
         if (!sessionToken) {
           throw new Error(`token response missing session_token: ${JSON.stringify(tokenJson).slice(0, 200)}`);

@@ -81,18 +81,27 @@ export function MeetRoom({
 
   useEffect(() => {
     if (started) return;
-    // Fetch HeyGen avatars for the thumbnail grid.
+    const AVOID = /santa|xmas|christmas|halloween|pumpkin|witch|zombie|dragon|monster|alien|costume|mascot|cartoon|anime|portrait/i;
+    const PREFER = /suit|business|professional|office|corporate|formal|executive|sales|manager|presenter|host|hr|lawyer|doctor|therapist|expert/i;
     fetch("/api/heygen/avatars")
       .then((r) => r.json())
       .then((data) => {
-        const list = (data.avatars ?? [])
-          .filter((a: { preview_image_url?: string }) => a.preview_image_url)
-          .slice(0, 12)
+        const raw = (data.avatars ?? [])
+          .filter((a: { preview_image_url?: string; avatar_name?: string }) =>
+            a.preview_image_url && !AVOID.test(a.avatar_name ?? "")
+          )
           .map((a: { avatar_id: string; avatar_name: string; preview_image_url: string }) => ({
             id: a.avatar_id,
             name: a.avatar_name,
             imageUrl: a.preview_image_url,
           }));
+        // Sort: professional/suit avatars first.
+        raw.sort((a: LobbyAvatar, b: LobbyAvatar) => {
+          const aP = PREFER.test(a.name) ? 0 : 1;
+          const bP = PREFER.test(b.name) ? 0 : 1;
+          return aP - bP;
+        });
+        const list = raw.slice(0, 12);
         setLobbyAvatars(list);
         if (list.length > 0 && !selectedAvatarId) {
           setSelectedAvatarId(list[0].id);

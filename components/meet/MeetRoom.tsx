@@ -175,7 +175,13 @@ export function MeetRoom({
   // to browser_tts so the visitor still hears audio instead of a
   // dead page. Tracked via deepgramFailed state.
   const [deepgramFailed, setDeepgramFailed] = useState(false);
-  const effectivePipeline = pipeline === "deepgram_tts" && deepgramFailed ? "browser_tts" : pipeline;
+  const [liveAvatarFailed, setLiveAvatarFailed] = useState(false);
+  const effectivePipeline =
+    pipeline === "liveavatar" && liveAvatarFailed
+      ? "browser_tts"
+      : pipeline === "deepgram_tts" && deepgramFailed
+      ? "browser_tts"
+      : pipeline;
 
   const usingLiveAvatar = effectivePipeline === "liveavatar" && USE_LIVEAVATAR;
   const usingHeyGenStreaming = effectivePipeline === "liveavatar" && !USE_LIVEAVATAR;
@@ -200,9 +206,16 @@ export function MeetRoom({
     enabled: started && usingDeepgramTTS,
   });
 
-  // If Deepgram TTS reports an error, flip the fallback switch so
-  // the next render picks browserTTS instead. This kicks in on the
-  // first failed /api/deepgram-tts request.
+  // If LiveAvatar or Deepgram TTS reports an error, fall back to
+  // browser_tts so the visitor still hears audio instead of a dead
+  // page. Typical cause: "No credits available for start session"
+  // on the LiveAvatar pipeline, or Deepgram INSUFFICIENT_PERMISSIONS.
+  useEffect(() => {
+    if (pipeline === "liveavatar" && liveAvatar.error && !liveAvatarFailed) {
+      console.warn("[meet] liveavatar unavailable, falling back to browser_tts", liveAvatar.error);
+      setLiveAvatarFailed(true);
+    }
+  }, [pipeline, liveAvatar.error, liveAvatarFailed]);
   useEffect(() => {
     if (pipeline === "deepgram_tts" && deepgramTTS.error && !deepgramFailed) {
       console.warn("[meet] deepgram_tts unavailable, falling back to browser_tts", deepgramTTS.error);

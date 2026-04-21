@@ -258,10 +258,12 @@ export async function POST(req: Request) {
     //    back to a placeholder string — the meet room only enforces
     //    the id when avatar_pipeline === "liveavatar".
     let avatarRowId: string | null = null;
+    // The greeting (SELF_DEMO_GREETING) already covers the opening.
+    // Keeping just one script line so the greeting-consume logic in
+    // MeetRoom eats it and the very first user message goes straight
+    // to the LLM instead of replaying greeting fragments.
     const scriptLines = [
-      "こんにちは、Sales AI Lab のデモ担当のソラです。",
-      "このアプリ自体について、何でも質問してください。",
-      "まずは気になることから、お気軽にお聞かせください。",
+      "こんにちは、Sales AI Lab のデモ担当のソラです。このアプリについて何でも聞いてください。",
     ];
     const { data: avatarRow } = await supabase
       .from("avatars")

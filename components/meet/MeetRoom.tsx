@@ -170,7 +170,10 @@ export function MeetRoom({
     ? liveAvatar.speak
     : heyGen.speak;
 
-  // After the avatar connects, greet the guest once.
+  // After the avatar connects, greet the guest once. The greeting
+  // text is typically identical to (or a superset of) scriptLines[0],
+  // so we consume the first script line here to avoid replaying the
+  // same content when the user's first message comes in.
   const [greeted, setGreeted] = useState(false);
   useEffect(() => {
     if (avatarStatus === "ready" && !greeted && started) {
@@ -178,8 +181,11 @@ export function MeetRoom({
       speak(greeting);
       setAiLatest(greeting);
       append("assistant", greeting);
+      if (scriptLinesRemaining > 0) {
+        setScriptLinesRemaining((prev) => Math.max(0, prev - 1));
+      }
     }
-  }, [avatarStatus, greeted, started, greeting, speak, append]);
+  }, [avatarStatus, greeted, started, greeting, speak, append, scriptLinesRemaining]);
 
   const onFinalTranscript = useCallback(
     async (text: string) => {

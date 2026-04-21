@@ -107,6 +107,7 @@ export async function POST(req: Request) {
     }
   }
 
+  console.log(`[liveavatar token] creating session: avatar=${liveAvatarId}, voice=${voiceId ?? "default"}`);
   try {
     const token = await withRetry(
       () => createLiveAvatarSessionToken({
@@ -116,10 +117,22 @@ export async function POST(req: Request) {
       }),
       "session"
     );
+    console.log(`[liveavatar token] success: session=${token.session_id}`);
     return NextResponse.json(token);
   } catch (err) {
-    console.error("[liveavatar token]", err);
+    console.error("[liveavatar token] all retries failed:", err);
     const msg = err instanceof Error ? err.message : "failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: msg,
+        debug: {
+          avatar_id_db: heygenAvatarId,
+          avatar_id_used: liveAvatarId,
+          voice_id: voiceId ?? null,
+          is_uuid: UUID_RE.test(heygenAvatarId),
+        },
+      },
+      { status: 500 }
+    );
   }
 }

@@ -46,8 +46,9 @@ export function useLiveAvatar({
             break;
           }
           const body = await tokenRes.text();
+          console.warn(`[liveavatar] token attempt ${attempt}: ${tokenRes.status} ${body.slice(0, 500)}`);
           if (tokenRes.status >= 500 && attempt < 3) {
-            console.warn(`[liveavatar] token attempt ${attempt} failed (${tokenRes.status}), retrying...`);
+            console.warn(`[liveavatar] retrying in ${attempt * 1.5}s...`);
             await new Promise((r) => setTimeout(r, attempt * 1500));
             continue;
           }

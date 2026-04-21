@@ -10,10 +10,12 @@ interface Props {
   voiceOnly?: boolean;
   /** Pulses the placeholder border when the TTS engine is mid-utterance. */
   speaking?: boolean;
+  /** Avatar preview image from HeyGen catalog. Replaces the 🎭 placeholder. */
+  avatarImageUrl?: string | null;
 }
 
 export const VideoPanel = forwardRef<HTMLVideoElement, Props>(function VideoPanel(
-  { status, avatarName, error, voiceOnly, speaking },
+  { status, avatarName, error, voiceOnly, speaking, avatarImageUrl },
   ref
 ) {
   // Voice-only mode renders a big glowing avatar placeholder.
@@ -26,16 +28,27 @@ export const VideoPanel = forwardRef<HTMLVideoElement, Props>(function VideoPane
             : "border-ac/20 bg-gradient-to-br from-s2 to-s1"
         }`}
       >
-        <div className="absolute inset-0 flex items-center justify-center">
+        {avatarImageUrl && (
+          <img
+            src={avatarImageUrl}
+            alt={avatarName}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity ${
+              speaking ? "opacity-100" : "opacity-80"
+            }`}
+          />
+        )}
+        <div className={`absolute inset-0 flex items-center justify-center ${avatarImageUrl ? "bg-black/30" : ""}`}>
           <div className="text-center">
-            <div
-              className={`text-8xl mb-4 ${speaking ? "animate-pulse" : ""}`}
-              aria-hidden
-            >
-              🎭
-            </div>
-            <div className="text-2xl font-bold mb-1">{avatarName}</div>
-            <div className="mono text-[10px] text-ac/70">
+            {!avatarImageUrl && (
+              <div
+                className={`text-8xl mb-4 ${speaking ? "animate-pulse" : ""}`}
+                aria-hidden
+              >
+                🎭
+              </div>
+            )}
+            <div className="text-2xl font-bold mb-1 drop-shadow-lg">{avatarName}</div>
+            <div className="mono text-[10px] text-ac/70 drop-shadow">
               VOICE-ONLY TRIAL
               {speaking && <span className="ml-2 text-ac">● SPEAKING</span>}
               {status === "error" && <span className="ml-2 text-red">● ERROR</span>}

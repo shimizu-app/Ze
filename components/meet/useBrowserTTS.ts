@@ -25,9 +25,12 @@ export interface BrowserVoice {
 export function useBrowserTTS({
   enabled,
   language = "ja-JP",
+  initialVoiceId,
 }: {
   enabled: boolean;
   language?: string;
+  /** Pre-selected voice from the lobby picker. Applied on first load. */
+  initialVoiceId?: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null); // unused but kept for shape parity
   const [status, setStatus] = useState<Status>("idle");
@@ -50,9 +53,16 @@ export function useBrowserTTS({
       if (all.length === 0) return;
       setVoices(all);
 
-      // Pick the best Japanese voice if we haven't chosen one yet.
+      // Use the lobby pre-selection if provided, otherwise auto-pick.
       setSelectedVoiceId((prev) => {
         if (prev) return prev;
+        if (initialVoiceId) {
+          const match = all.find((v) => v.voiceURI === initialVoiceId);
+          if (match) {
+            selectedVoiceRef.current = match;
+            return initialVoiceId;
+          }
+        }
         const best = pickBestJapaneseVoice(all);
         if (best) {
           selectedVoiceRef.current = best;

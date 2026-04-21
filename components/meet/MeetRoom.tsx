@@ -15,6 +15,18 @@ import { ChatHistory } from "./ChatHistory";
 import { pickFiller, pickFillerBucket } from "./fillers";
 import { detectPhase } from "@/lib/classify";
 
+interface LobbyAvatar {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+}
+
+interface LobbyVoice {
+  id: string;
+  name: string;
+  quality: number;
+}
+
 // Feature flag: when not overridden, drive the meet room with the
 // @heygen/liveavatar-web-sdk pipeline. Set NEXT_PUBLIC_USE_LIVEAVATAR
 // =false on Vercel to fall back to the old streaming SDK for testing.
@@ -59,6 +71,62 @@ export function MeetRoom({
   // transitions to discovery / pitch / objection / closing phases.
   const [scriptLinesRemaining, setScriptLinesRemaining] = useState<number>(scriptLines.length);
   const [started, setStarted] = useState(false);
+
+  // Lobby: avatar + voice selection before meeting starts.
+  const [lobbyAvatars, setLobbyAvatars] = useState<LobbyAvatar[]>([]);
+  const [lobbyVoices, setLobbyVoices] = useState<LobbyVoice[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
+  const [selectedAvatarImage, setSelectedAvatarImage] = useState<string | null>(null);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (started) return;
+    // Fetch HeyGen avatars for the thumbnail grid.
+    fetch("/api/heygen/avatars")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = (data.avatars ?? [])
+          .filter((a: { preview_image_url?: string }) => a.preview_image_url)
+          .slice(0, 12)
+          .map((a: { avatar_id: string; avatar_name: string; preview_image_url: string }) => ({
+            id: a.avatar_id,
+            name: a.avatar_name,
+            imageUrl: a.preview_image_url,
+          }));
+        setLobbyAvatars(list);
+        if (list.length > 0 && !selectedAvatarId) {
+          setSelectedAvatarId(list[0].id);
+          setSelectedAvatarImage(list[0].imageUrl);
+        }
+      })
+      .catch(() => {});
+  }, [started, selectedAvatarId]);
+
+  useEffect(() => {
+    if (started) return;
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    function loadVoices() {
+      const all = window.speechSynthesis.getVoices();
+      const ja = all
+        .filter((v) => v.lang.toLowerCase().startsWith("ja"))
+        .map((v) => {
+          let q = 0;
+          const n = v.name.toLowerCase();
+          if (/premium|enhanced|neural|siri|natural|wavenet/.test(n)) q += 100;
+          if (/kyoko|otoya|ayumi|haruka|nanami|keita/.test(n)) q += 50;
+          if (!v.localService) q += 10;
+          return { id: v.voiceURI, name: v.name, quality: q };
+        })
+        .sort((a, b) => b.quality - a.quality);
+      if (ja.length > 0) {
+        setLobbyVoices(ja);
+        setSelectedVoiceId((prev) => prev ?? ja[0].id);
+      }
+    }
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, [started]);
   const [userInterim, setUserInterim] = useState("");
   const [aiLatest, setAiLatest] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -126,6 +194,7 @@ export function MeetRoom({
   });
   const browserTTS = useBrowserTTS({
     enabled: started && usingBrowserTTS,
+    initialVoiceId: selectedVoiceId,
   });
   const deepgramTTS = useDeepgramTTS({
     enabled: started && usingDeepgramTTS,
@@ -409,24 +478,86 @@ export function MeetRoom({
   if (!started) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-6">
-        <div className="max-w-lg w-full rounded-3xl border border-ac/30 bg-s1 p-10 glow-ac text-center">
-          <div className="mono text-[10px] text-ac/70 mb-3">MEETING ROOM // {roomId}</div>
-          <h1 className="text-3xl font-bold mb-2">
-            <span className="text-ac">{companyName}</span> との商談
-          </h1>
-          {contactName && <div className="text-white/60 mb-4">{contactName} 様</div>}
-          <p className="text-sm text-white/70 mt-6 mb-8">
-            「会議を開始」を押すとマイク・カメラ許可を求められます。
-            許可すると AI アバター <strong className="text-ac">{avatarName}</strong> との商談が始まります。
-          </p>
-          <button
-            onClick={() => setStarted(true)}
-            className="px-8 py-3 bg-ac hover:bg-neon text-black font-semibold rounded-full transition"
-          >
-            会議を開始する
-          </button>
-          <div className="mt-6 text-xs text-white/40">
-            ※音声は録音・保存され、商材説明の改善に使われます
+        <div className="max-w-2xl w-full rounded-3xl border border-ac/30 bg-s1 p-10 glow-ac">
+          <div className="text-center mb-8">
+            <div className="mono text-[10px] text-ac/70 mb-3">MEETING ROOM // {roomId}</div>
+            <h1 className="text-3xl font-bold mb-2">
+              <span className="text-ac">{companyName}</span> との商談
+            </h1>
+            {contactName && <div className="text-white/60">{contactName} 様</div>}
+          </div>
+
+          {lobbyAvatars.length > 0 && (
+            <div className="mb-6">
+              <div className="mono text-[10px] text-white/50 mb-3">AVATAR</div>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                {lobbyAvatars.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => {
+                      setSelectedAvatarId(a.id);
+                      setSelectedAvatarImage(a.imageUrl);
+                    }}
+                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all hover:scale-105 ${
+                      selectedAvatarId === a.id
+                        ? "border-ac shadow-[0_0_20px_rgba(192,96,255,0.4)]"
+                        : "border-white/10 hover:border-white/30"
+                    }`}
+                  >
+                    {a.imageUrl ? (
+                      <img src={a.imageUrl} alt={a.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-s2 flex items-center justify-center text-2xl">🎭</div>
+                    )}
+                    {selectedAvatarId === a.id && (
+                      <div className="absolute inset-0 bg-ac/20 flex items-center justify-center">
+                        <div className="w-6 h-6 rounded-full bg-ac flex items-center justify-center text-black text-xs font-bold">
+                          ✓
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+              {selectedAvatarId && lobbyAvatars.find((a) => a.id === selectedAvatarId) && (
+                <div className="mt-2 text-xs text-white/50">
+                  {lobbyAvatars.find((a) => a.id === selectedAvatarId)?.name}
+                </div>
+              )}
+            </div>
+          )}
+
+          {lobbyVoices.length > 0 && (
+            <div className="mb-8">
+              <div className="mono text-[10px] text-white/50 mb-3">VOICE</div>
+              <select
+                value={selectedVoiceId ?? ""}
+                onChange={(e) => setSelectedVoiceId(e.target.value)}
+                className="w-full bg-s2 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-ac"
+              >
+                {lobbyVoices.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}{v.quality >= 100 ? " ★" : v.quality >= 50 ? " ☆" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-[10px] text-white/40">★ = Premium / Neural voice</div>
+            </div>
+          )}
+
+          <div className="text-center">
+            <p className="text-sm text-white/70 mb-6">
+              「会議を開始」を押すとマイク許可を求められます。
+            </p>
+            <button
+              onClick={() => setStarted(true)}
+              className="px-8 py-3 bg-ac hover:bg-neon text-black font-semibold rounded-full transition"
+            >
+              会議を開始する
+            </button>
+            <div className="mt-6 text-xs text-white/40">
+              ※音声は録音・保存され、商材説明の改善に使われます
+            </div>
           </div>
         </div>
       </div>
@@ -465,6 +596,7 @@ export function MeetRoom({
               error={avatarError}
               voiceOnly={usingBrowserTTS}
               speaking={usingBrowserTTS ? browserTTS.speaking : false}
+              avatarImageUrl={selectedAvatarImage}
             />
             <SubtitleOverlay userInterim={userInterim} aiLatest={aiLatest} />
             <ControlBar

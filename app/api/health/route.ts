@@ -5,7 +5,7 @@ import { listHeyGenAvatars } from "@/lib/heygen";
 import { listLiveAvatars, createLiveAvatarSessionToken } from "@/lib/liveavatar";
 import { groqChat } from "@/lib/groq";
 import { auraSpeak } from "@/lib/deepgram-tts";
-import { classifyIntent } from "@/lib/classify";
+import { classifyWithPhase, detectPhase } from "@/lib/classify";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * the latest code. If this doesn't say "phase9" in the response, the
  * deployment is stale.
  */
-const PHASE_MARKER = "phase10-conversation-phase-router";
+const PHASE_MARKER = "phase11-unified-llm-layer";
 
 function prefix(val: string | undefined, n: number) {
   if (!val) return null;
@@ -86,17 +86,54 @@ export async function GET() {
     return `bytes=${audio.byteLength}, ct=${contentType}`;
   });
 
-  const classifyTests = [
-    { text: "はい", expected: "light" },
-    { text: "料金はいくらですか？", expected: "heavy" },
-    { text: "ちょっと教えてください", expected: "light" },
-    { text: "セキュリティはどうなってますか？", expected: "heavy" },
-  ].map((t) => ({
-    input: t.text,
-    expected: t.expected,
-    got: classifyIntent(t.text),
-    pass: classifyIntent(t.text) === t.expected,
-  }));
+  // Phase 11: phase router replaces the intent classifier. We now
+  // verify that detectPhase + classifyWithPhase map realistic utterances
+  // to the right (phase, intent, maxTokens) triple.
+  const phaseTests = [
+    {
+      label: "opening with script remaining",
+      args: { turnCount: 0, scriptLinesRemaining: 2, recentUserText: "こんにちは" },
+      expectedPhase: "opening",
+      expectedIntent: "script",
+    },
+    {
+      label: "early discovery",
+      args: { turnCount: 1, scriptLinesRemaining: 0, recentUserText: "うちの業界で使えますか" },
+      expectedPhase: "discovery",
+      expectedIntent: "unified",
+    },
+    {
+      label: "objection by keyword",
+      args: { turnCount: 6, scriptLinesRemaining: 0, recentUserText: "ちょっと高いですね" },
+      expectedPhase: "objection",
+      expectedIntent: "unified",
+    },
+    {
+      label: "closing by keyword",
+      args: { turnCount: 6, scriptLinesRemaining: 0, recentUserText: "トライアル試したいです" },
+      expectedPhase: "closing",
+      expectedIntent: "unified",
+    },
+    {
+      label: "mid pitch by turn count",
+      args: { turnCount: 6, scriptLinesRemaining: 0, recentUserText: "料金を教えてください" },
+      expectedPhase: "pitch",
+      expectedIntent: "unified",
+    },
+  ].map((t) => {
+    const phase = detectPhase(t.args);
+    const routing = classifyWithPhase(t.args.recentUserText, phase);
+    return {
+      label: t.label,
+      input: t.args.recentUserText,
+      expected_phase: t.expectedPhase,
+      got_phase: phase,
+      expected_intent: t.expectedIntent,
+      got_intent: routing.intent,
+      max_tokens: routing.maxTokens,
+      pass: phase === t.expectedPhase && routing.intent === t.expectedIntent,
+    };
+  });
 
   // --- Gemini text generation ping
   const geminiTextCheck = await safeCheck(async () => {
@@ -186,7 +223,7 @@ export async function GET() {
       gemini_paid_tier: geminiPaidCheck,
       groq_chat: groqCheck,
       deepgram_tts: deepgramTtsCheck,
-      intent_classifier: classifyTests,
+      phase_router: phaseTests,
       heygen_list: heyGenListCheck,
       liveavatar_list: liveAvatarListCheck,
       liveavatar_token: liveAvatarTokenCheck,

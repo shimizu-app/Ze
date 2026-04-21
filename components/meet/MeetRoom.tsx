@@ -13,6 +13,7 @@ import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
 import { ChatHistory } from "./ChatHistory";
 import { pickFiller, pickFillerBucket } from "./fillers";
+import { detectPhase } from "@/lib/classify";
 
 // Feature flag: when not overridden, drive the meet room with the
 // @heygen/liveavatar-web-sdk pipeline. Set NEXT_PUBLIC_USE_LIVEAVATAR
@@ -197,18 +198,32 @@ export function MeetRoom({
       let firstChunkAt: number | null = null;
       let firstSpeakAt: number | null = null;
 
-      // Phase 9A.5: Emit a short filler immediately so the user hears
-      // the avatar start reacting before Gemini finishes generating.
-      // We add this both to the audio pipeline (speak) and the subtitle
-      // (aiLatest) so the two stay in sync. HeyGen/LiveAvatar queues
-      // the subsequent streamed sentences behind the filler.
-      const fillerBucket = pickFillerBucket(text);
-      const filler = pickFiller(fillerBucket);
-      setAiLatest(filler);
-      speak(filler);
+      // Phase 11: compute the local phase using the same logic as
+      // /api/rag so we can gate the filler. Filler only fires in the
+      // discovery phase — in opening it risks echo-looping right
+      // after the scripted greeting, in pitch/objection/closing it
+      // makes the avatar sound dismissive ("なるほど" then a dense
+      // technical answer feels robotic).
+      const userTurnCount = turns.filter((t) => t.role === "user").length;
+      const recentUserText = turns
+        .filter((t) => t.role === "user")
+        .slice(-3)
+        .map((t) => t.text)
+        .concat(text)
+        .join(" ");
+      const localPhase = detectPhase({
+        turnCount: userTurnCount,
+        scriptLinesRemaining,
+        recentUserText,
+      });
+      if (localPhase === "discovery") {
+        const fillerBucket = pickFillerBucket(text);
+        const filler = pickFiller(fillerBucket);
+        setAiLatest(filler);
+        speak(filler);
+      }
 
       try {
-        const userTurnCount = turns.filter((t) => t.role === "user").length;
         const res = await fetch("/api/rag", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -315,7 +330,7 @@ export function MeetRoom({
         setThinking(false);
       }
     },
-    [append, roomId, speak, turns]
+    [append, roomId, speak, turns, scriptLines, scriptLinesRemaining]
   );
 
   // While the AI is speaking, mute the mic so its own voice doesn't

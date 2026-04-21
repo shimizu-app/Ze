@@ -1,113 +1,50 @@
 /**
- * Rule-based intent classifier for the 3-layer LLM router.
+ * Phase 11 conversation-phase router.
  *
- * The whole point is zero latency — we do not call any model to
- * decide which downstream model to use. Instead we look at the
- * surface form of the user's utterance and bucket it:
+ * Previous phases tried to pick a provider (Groq vs Gemini) from a
+ * keyword-matched intent at classify time. That fought the phase
+ * logic: an objection-phase "ちょっと高い" would get SHORT-classified
+ * as light and routed to Groq, but objection work needs the richer
+ * Gemini prompt. We've collapsed intent to two values and let the
+ * phase alone decide the token budget. The provider choice is now
+ * handled by lib/llm.ts (Groq primary, Gemini fallback).
  *
- * - "script"  → the meeting is in a scripted phase (e.g. opening
- *               pitch, closing). We return the next script line
- *               without calling any LLM. 0ms.
- * - "light"   → short acknowledgements / small-talk / bridging
- *               questions. Routed to Groq llama-3.3-70b for ~50ms.
- * - "heavy"   → substantive product / pricing / feature / security
- *               questions. Routed to Gemini 2.5 Flash with full RAG.
- *
- * When in doubt we return "heavy" — Gemini is the safe default for
- * anything that could affect the sale.
+ * - "script"  → /api/rag plays the next avatars.script_lines entry
+ *               straight back. Zero LLM, ~0ms.
+ * - "unified" → /api/rag calls callLLM() with the phase-specific
+ *               token cap and the shared prompts from lib/prompts.ts.
  */
 
-export type Intent = "script" | "light" | "heavy";
-
-const LIGHT_PREFIXES = [
-  /^(はい|うん|ええ|そうですね|なるほど|そうなんですね|そうですか)/,
-  /^(ちょっと|少し|もう少し|そうだ|たしかに|確かに)/,
-  /^(じゃあ|では|それで|ところで|あの|えっと|ええと)/,
-];
-
-const LIGHT_SUFFIXES = [
-  /ですか[?？]?$/,
-  /でしょうか[?？]?$/,
-  /ますか[?？]?$/,
-  /教えてください$/,
-  /聞かせてください$/,
-  /いいですか[?？]?$/,
-];
-
-const HEAVY_KEYWORDS = [
-  // 価格
-  "料金", "値段", "価格", "費用", "お値段", "コスト", "月額", "年額", "予算",
-  // 機能
-  "機能", "できる", "できない", "対応", "仕様", "性能", "スペック",
-  // 比較
-  "他社", "競合", "比較", "違い", "メリット", "デメリット", "特徴",
-  // 契約
-  "契約", "導入", "スケジュール", "期間", "開始", "解約", "プラン",
-  // セキュリティ
-  "セキュリティ", "データ", "保護", "プライバシー", "個人情報", "GDPR",
-  // 実績
-  "実績", "事例", "導入先", "顧客", "成功例", "ROI", "効果",
-  // トライアル
-  "トライアル", "体験", "無料", "デモ", "試用", "サンプル",
-  // 技術
-  "API", "連携", "インテグレーション", "CRM", "Salesforce", "HubSpot",
-  // サポート
-  "サポート", "問い合わせ", "対応時間", "SLA",
-];
-
-const SHORT_THRESHOLD = 8; // Phase 10.2: tighten so only truly trivial acks go to Groq
-
-export interface ClassifyContext {
-  /** True while the conversation is still playing a scripted opening / closing. */
-  isInScriptPhase?: boolean;
-}
-
-/**
- * Classify a user utterance into an intent bucket. Heavy is the
- * conservative default — if we can't decide, we bounce to Gemini.
- */
-export function classifyIntent(text: string, ctx: ClassifyContext = {}): Intent {
-  if (ctx.isInScriptPhase) return "script";
-
-  const trimmed = text.trim();
-  if (!trimmed) return "light";
-
-  // Obvious heavy hits: any product/pricing keyword in the text.
-  const lower = trimmed.toLowerCase();
-  if (HEAVY_KEYWORDS.some((kw) => trimmed.includes(kw) || lower.includes(kw.toLowerCase()))) {
-    return "heavy";
-  }
-
-  // Very short acknowledgements.
-  if (trimmed.length <= SHORT_THRESHOLD) {
-    if (LIGHT_PREFIXES.some((re) => re.test(trimmed))) return "light";
-  }
-
-  // Light small-talk patterns (short + ends with a polite question).
-  if (trimmed.length <= 40 && LIGHT_SUFFIXES.some((re) => re.test(trimmed))) {
-    // If it's a short polite question but mentions nothing substantive, treat as light.
-    if (!HEAVY_KEYWORDS.some((kw) => trimmed.includes(kw))) {
-      return "light";
-    }
-  }
-
-  // Default: treat anything longer or ambiguous as heavy.
-  return "heavy";
-}
-
-// =============================================================================
-// Phase 10: conversation-phase aware routing
-// =============================================================================
+export type Intent = "script" | "unified";
 
 export type ConversationPhase =
-  | "opening"   // 台本フェーズ。avatars.script_lines を順に発話 (LLM コール 0)
-  | "discovery" // ヒアリング。intent に応じて Groq / Gemini を分ける
-  | "pitch"     // 商品説明。常に Gemini で短めに
-  | "objection" // 反論対応。常に Gemini で長めに、共感ベース
-  | "closing";  // クロージング。常に Gemini で次アクション提示
+  | "opening"   // avatars.script_lines を順に発話 (LLM コール 0)
+  | "discovery" // ヒアリング。短めの相槌 + 質問返し
+  | "pitch"     // 商品説明。数字・事例で具体的に
+  | "objection" // 反論対応。共感 → 代替案
+  | "closing";  // クロージング。次アクション提示
 
 const OBJECTION_KEYWORDS = /(高い|難しい|不安|困る|ちょっと|検討|別の|考え|やめて|まだ|無理|厳しい|心配|疑問)/;
 const CLOSING_KEYWORDS = /(トライアル|試し|次|申込|契約|デモ|登録|始め|取り組み|前向き|やってみ|お願い|決め)/;
+
+/**
+ * Phase-specific output token budgets. Tuned to target:
+ *   opening   ≈ 60字   (script lines are pre-authored, just a cap)
+ *   discovery ≈ 80〜120字 (short acknowledgement + one question)
+ *   pitch     ≈ 140〜180字 (concrete answer with a number or example)
+ *   objection ≈ 180〜220字 (empathy + alternative)
+ *   closing   ≈ 120〜160字 (single next-step proposal)
+ *
+ * Japanese averages roughly 1.8 tokens per character on Gemini/Groq
+ * tokenisers, so the char budget ≈ tokens / 1.8.
+ */
+const TOKEN_LIMITS: Record<ConversationPhase, number> = {
+  opening: 80,
+  discovery: 180,
+  pitch: 250,
+  objection: 300,
+  closing: 200,
+};
 
 export interface DetectPhaseArgs {
   /** Total user-side turn count so far (0 indexed = brand new meeting). */
@@ -119,15 +56,14 @@ export interface DetectPhaseArgs {
 }
 
 /**
- * Decide which conversation phase the meeting is currently in. The
- * router is rule-based on purpose so it adds 0ms latency:
+ * Decide which conversation phase the meeting is currently in.
  *
  *   1. script_lines remaining  → opening
- *   2. objection keywords      → objection (overrides everything below)
+ *   2. objection keywords      → objection (overrides turn-count)
  *   3. closing keywords        → closing
  *   4. early turns (<4)        → discovery
  *   5. mid turns (4-11)        → pitch
- *   6. long meeting (12+)      → closing (assume the visitor is winding down)
+ *   6. long meeting (12+)      → closing (winding down)
  */
 export function detectPhase(args: DetectPhaseArgs): ConversationPhase {
   if (args.scriptLinesRemaining > 0) return "opening";
@@ -143,43 +79,21 @@ export function detectPhase(args: DetectPhaseArgs): ConversationPhase {
 
 export interface PhaseRouting {
   intent: Intent;
-  /** Hard cap on Gemini / Groq output tokens. Keeps replies snappy. */
+  /** Hard cap on LLM output tokens for this phase. */
   maxTokens: number;
 }
 
 /**
- * Combine intent classification with the conversation phase to pick
- * which LLM bucket to use AND how long the response is allowed to be.
- *
- * - opening   → script (台本固定, 0 LLM)
- * - discovery → light/heavy as classified, short cap (40 / 100 tokens)
- * - pitch     → forced heavy, medium cap (120 tokens)
- * - objection → forced heavy, long cap (200 tokens) — empathy + push-back
- * - closing   → forced heavy, medium cap (120 tokens)
- *
- * Defaulting heavy in the substantive phases means we never accidentally
- * route a "may I ask about pricing?" through Groq just because it's
- * short — the phase wins.
+ * Map the current phase to (intent, maxTokens). Opening is the only
+ * phase that bypasses the LLM entirely; everything else goes through
+ * callLLM() with the per-phase budget.
  */
 export function classifyWithPhase(
-  text: string,
+  _text: string,
   phase: ConversationPhase
 ): PhaseRouting {
-  const baseIntent = classifyIntent(text);
-
-  switch (phase) {
-    case "opening":
-      return { intent: "script", maxTokens: 80 };
-    case "discovery":
-      return {
-        intent: baseIntent,
-        maxTokens: baseIntent === "light" ? 120 : 200,
-      };
-    case "pitch":
-      return { intent: "heavy", maxTokens: 250 };
-    case "objection":
-      return { intent: "heavy", maxTokens: 300 };
-    case "closing":
-      return { intent: "heavy", maxTokens: 200 };
+  if (phase === "opening") {
+    return { intent: "script", maxTokens: TOKEN_LIMITS.opening };
   }
+  return { intent: "unified", maxTokens: TOKEN_LIMITS[phase] };
 }

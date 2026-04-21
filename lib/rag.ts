@@ -1,4 +1,4 @@
-import { geminiEmbed, geminiGenerate, geminiGenerateStream } from "@/lib/gemini";
+import { geminiEmbed } from "@/lib/gemini";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export interface TurnMessage {
@@ -100,20 +100,25 @@ export async function loadMeetingContext(roomId: string): Promise<
 
 /**
  * Retrieve top-K RAG documents for the given user utterance. Returns
- * a list of plain strings plus the raw embedding so the caller can
- * reuse it (e.g. for debugging / logging).
+ * the docs plus the embedding actually used (fresh or prefetched) so
+ * callers can log / reuse it.
  *
- * `match_count` defaults to 3 (Phase 9C prompt shortening — cutting
- * from 5 to 3 shaves tokens and helps Gemini first-token latency).
+ * Phase 9A: the client-side interim handler can fire the embedding
+ * request while the user is still speaking, then hand the result to
+ * /api/rag. When `prefetchedEmbedding` is supplied we skip geminiEmbed.
+ *
+ * `matchCount` defaults to 3 (Phase 9C: 5 → 3 shaves tokens and helps
+ * Gemini first-token latency).
  */
 export async function retrieveDocs(
   userText: string,
   accountId: string,
-  matchCount = 3
+  matchCount = 3,
+  prefetchedEmbedding?: number[]
 ): Promise<{ docs: string[]; embedding: number[] | null }> {
   const supabase = createServiceClient();
   try {
-    const embedding = await geminiEmbed(userText);
+    const embedding = prefetchedEmbedding ?? (await geminiEmbed(userText));
     const { data: matches } = await supabase.rpc("match_documents", {
       query_embedding: `[${embedding.join(",")}]` as unknown as string,
       match_threshold: 0.6,
@@ -129,174 +134,5 @@ export async function retrieveDocs(
   } catch (err) {
     console.error("[rag] retrieval failed", err);
     return { docs: [], embedding: null };
-  }
-}
-
-/**
- * Build the Gemini prompt. The block order is intentional:
- *
- *   1. systemPrompt           ← stable per session → implicit cache target
- *   2. productBlock           ← stable per session → implicit cache target
- *   3. learningBlock          ← changes slowly over the session
- *   4. ragBlock (top-3)       ← changes every turn
- *   5. historyBlock (last 5)  ← changes every turn
- *   6. userText               ← the new question
- *
- * Putting the long, stable chunks first maximises Gemini's implicit
- * prompt cache hit rate on the free tier (Google automatically caches
- * shared prefixes). Once we upgrade to paid we can switch to explicit
- * caches.create and feed stages 1+2 via cachedContent — the rest of
- * the prompt is already structured to drop in without reshuffling.
- */
-export function buildRagPrompt({
-  userText,
-  history,
-  context,
-  retrieved,
-}: {
-  userText: string;
-  history: TurnMessage[];
-  context: RagContext;
-  retrieved: string[];
-}): string {
-  const systemPrompt =
-    context.avatar?.system_prompt?.trim() ||
-    `あなたは${context.avatar?.name ?? "営業担当"}というAI営業アバターです。丁寧で自然な日本語で会話してください。`;
-
-  const productBlock = context.product
-    ? `# 担当商材
-- 名前: ${context.product.name}
-- 強み: ${context.product.strengths ?? "不明"}
-- ターゲットペイン: ${(context.product.pains ?? []).join(", ") || "不明"}`
-    : "";
-
-  // Learning block — injected when Groq interim analysis has produced anything useful.
-  const l = context.learning;
-  const learningLines: string[] = [];
-  if (l?.persona) learningLines.push(`- ペルソナ: ${l.persona}`);
-  if (l?.communication_type) learningLines.push(`- コミュニケーション型: ${l.communication_type}`);
-  if (l?.current_emotion) learningLines.push(`- 現在の感情: ${l.current_emotion}`);
-  if (l?.hot_topics && l.hot_topics.length > 0)
-    learningLines.push(`- 気になっていること: ${l.hot_topics.join("、")}`);
-  if (l?.pain_points && l.pain_points.length > 0)
-    learningLines.push(`- ペイン: ${l.pain_points.join("、")}`);
-  if (l?.objections && l.objections.length > 0)
-    learningLines.push(`- 懸念事項: ${l.objections.join("、")}`);
-  const learningBlock =
-    learningLines.length > 0
-      ? `# 現在の相手の状態\n${learningLines.join("\n")}\n
-# 返答方針
-- ペルソナが engineer なら技術的に、executive なら数字と ROI で話す
-- 感情が anxious なら共感から入る、rushed なら短く返す`
-      : "";
-
-  const contextBlock =
-    retrieved.length > 0
-      ? `# 参考ドキュメント\n${retrieved.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")}`
-      : "";
-
-  // Phase 10.2: history 5 → 8 turns (10→5 was too aggressive, lost context)
-  const historyBlock = history
-    .slice(-8)
-    .map((t) => `${t.role === "user" ? "相手" : "あなた"}: ${t.text}`)
-    .join("\n");
-
-  return [
-    systemPrompt,
-    productBlock,
-    learningBlock,
-    contextBlock,
-    `# これまでの会話\n${historyBlock || "(まだありません)"}`,
-    `# 相手の最新発言\n${userText}`,
-    `# 指示
-上記を踏まえ、営業アバターとして自然な一言で返答してください。
-長すぎず、相手が返しやすい返事にしてください。前置きや「了解しました」などは不要です。`,
-  ]
-    .filter((block) => block.trim())
-    .join("\n\n");
-}
-
-/**
- * Non-streaming response generator. Kept for internal callers that
- * still want a single Promise.
- */
-export async function generateAvatarResponse({
-  userText,
-  history,
-  context,
-}: {
-  userText: string;
-  history: TurnMessage[];
-  context: RagContext;
-}): Promise<string> {
-  const { docs } = await retrieveDocs(userText, context.accountId);
-  const prompt = buildRagPrompt({ userText, history, context, retrieved: docs });
-  try {
-    const response = await geminiGenerate(prompt);
-    return response.trim() || "申し訳ありません、もう一度お願いできますか？";
-  } catch (err) {
-    console.error("[rag] generation failed", err);
-    return "申し訳ありません、ただいま回線が不安定です。もう一度お願いできますか？";
-  }
-}
-
-/**
- * Streaming version of generateAvatarResponse.
- *
- * Phase 9A parallelisation: the caller is expected to have already
- * loaded the meeting context in parallel with the embedding retrieval.
- * If a prefetched embedding is supplied we skip the geminiEmbed() call
- * entirely — the interim-handler on the client will have fired the
- * embedding request while the user was still speaking.
- *
- * Phase 10: maxOutputTokens lets the caller clamp Gemini's reply to
- * the per-phase budget (40 / 100 / 120 / 200 etc.). cachedContent
- * forwards the paid-tier CachedContent name when available.
- */
-export async function* generateAvatarResponseStream({
-  userText,
-  history,
-  context,
-  prefetchedEmbedding,
-  maxOutputTokens,
-  cachedContent,
-}: {
-  userText: string;
-  history: TurnMessage[];
-  context: RagContext;
-  prefetchedEmbedding?: number[];
-  maxOutputTokens?: number;
-  cachedContent?: string;
-}): AsyncGenerator<string> {
-  const supabase = createServiceClient();
-
-  // 1. Retrieve relevant documents for the user's latest utterance.
-  let retrieved: string[] = [];
-  try {
-    const embedding = prefetchedEmbedding ?? (await geminiEmbed(userText));
-    const { data: matches } = await supabase.rpc("match_documents", {
-      query_embedding: `[${embedding.join(",")}]` as unknown as string,
-      match_threshold: 0.6,
-      match_count: 3,
-      filter_account_id: context.accountId,
-    });
-    if (Array.isArray(matches)) {
-      retrieved = matches
-        .map((m: { content?: string }) => m.content)
-        .filter((c): c is string => Boolean(c));
-    }
-  } catch (err) {
-    console.error("[rag-stream] retrieval failed", err);
-  }
-
-  const prompt = buildRagPrompt({ userText, history, context, retrieved });
-
-  try {
-    for await (const chunk of geminiGenerateStream(prompt, { maxOutputTokens, cachedContent })) {
-      yield chunk;
-    }
-  } catch (err) {
-    console.error("[rag-stream] generation failed", err);
-    yield "申し訳ありません、ただいま回線が不安定です。もう一度お願いできますか？";
   }
 }

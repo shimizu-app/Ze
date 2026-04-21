@@ -1,21 +1,17 @@
 import { NextResponse } from "next/server";
 import {
-  generateAvatarResponse,
-  generateAvatarResponseStream,
   loadMeetingContext,
+  retrieveDocs,
   type TurnMessage,
-  type RagContext,
 } from "@/lib/rag";
-import {
-  classifyIntent,
-  classifyWithPhase,
-  detectPhase,
-  type ConversationPhase,
-} from "@/lib/classify";
-import { groqChatStream } from "@/lib/groq";
+import { classifyWithPhase, detectPhase } from "@/lib/classify";
+import { buildSystemPrompt, buildUserMessage } from "@/lib/prompts";
+import { callLLM } from "@/lib/llm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const FALLBACK_UTTERANCE = "申し訳ありません、もう一度お願いできますか？";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -27,8 +23,7 @@ export async function POST(req: Request) {
     ? (body.prefetched_embedding as number[])
     : undefined;
 
-  // Phase 10 inputs (all optional — defaults reproduce Phase 9 behaviour
-  // for callers that haven't migrated yet).
+  // Phase 10 inputs (all optional).
   const turnCount =
     typeof body.turn_count === "number" && Number.isFinite(body.turn_count)
       ? body.turn_count
@@ -48,7 +43,7 @@ export async function POST(req: Request) {
   const loaded = await loadMeetingContext(roomId);
   if (!loaded) return NextResponse.json({ error: "meeting not found" }, { status: 404 });
 
-  // Phase 10: figure out where in the conversation we are.
+  // Phase 10+: phase detection drives everything downstream.
   const recentUserText = history
     .filter((t) => t.role === "user")
     .slice(-3)
@@ -60,11 +55,10 @@ export async function POST(req: Request) {
     scriptLinesRemaining,
     recentUserText,
   });
-  const routing = classifyWithPhase(userText, phase);
-  const intent = routing.intent;
-  const maxTokens = routing.maxTokens;
+  const { intent, maxTokens } = classifyWithPhase(userText, phase);
 
-  // Non-streaming fallback.
+  // Non-streaming fallback — kept for callers that still hit POST with
+  // stream:false (internal tools, health checks).
   if (!stream) {
     if (intent === "script") {
       const scriptIndex = Math.max(0, scriptLines.length - scriptLinesRemaining);
@@ -77,13 +71,27 @@ export async function POST(req: Request) {
         max_tokens: maxTokens,
       });
     }
-    const text = await generateAvatarResponse({
-      userText,
-      history,
-      context: loaded.context,
-    });
+
+    const { docs } = await retrieveDocs(userText, loaded.context.accountId);
+    const system = buildSystemPrompt({ context: loaded.context, phase, retrieved: docs });
+    const user = buildUserMessage({ userText, history });
+    let out = "";
+    try {
+      for await (const chunk of callLLM(
+        [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        { maxTokens }
+      )) {
+        out += chunk;
+      }
+    } catch (err) {
+      console.error("[rag] non-stream both providers failed", err);
+      out = FALLBACK_UTTERANCE;
+    }
     return NextResponse.json({
-      text,
+      text: out.trim() || FALLBACK_UTTERANCE,
       meeting_id: loaded.meeting.id,
       intent,
       phase,
@@ -91,7 +99,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // Server-Sent Events: one JSON object per line prefixed with "data: ".
+  // Server-Sent Events: one JSON object per frame, blank-line terminated.
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
@@ -109,47 +117,52 @@ export async function POST(req: Request) {
         });
 
         if (intent === "script") {
-          // Opening phase — read the next scripted line straight back.
-          // Zero LLM cost, zero time-to-first-token.
+          // Opening phase — play the next scripted line. Zero LLM.
           const scriptIndex = Math.max(0, scriptLines.length - scriptLinesRemaining);
           const line = scriptLines[scriptIndex];
           if (line && line.trim()) {
             send({ type: "chunk", text: line });
-          } else {
-            // Script ran out unexpectedly → fall through to a tiny
-            // discovery-style heavy reply so the meeting doesn't dead-end.
-            for await (const chunk of generateAvatarResponseStream({
-              userText,
-              history,
-              context: loaded.context,
-              prefetchedEmbedding,
-              maxOutputTokens: 80,
-            })) {
+            send({ type: "done" });
+            return;
+          }
+          // Script ran out unexpectedly → fall through to unified.
+        }
+
+        // Unified path: RAG retrieval → system+user messages → callLLM.
+        const { docs } = await retrieveDocs(
+          userText,
+          loaded.context.accountId,
+          3,
+          prefetchedEmbedding
+        );
+        const systemPrompt = buildSystemPrompt({
+          context: loaded.context,
+          phase,
+          retrieved: docs,
+        });
+        const userPrompt = buildUserMessage({ userText, history });
+
+        let emitted = 0;
+        try {
+          for await (const chunk of callLLM(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            { maxTokens }
+          )) {
+            if (chunk) {
               send({ type: "chunk", text: chunk });
+              emitted += chunk.length;
             }
           }
-        } else if (intent === "light") {
-          // Light route → Groq llama-3.3-70b. No RAG retrieval — keep
-          // the prompt tiny so the model responds in <100ms.
-          for await (const chunk of streamLightResponse({
-            userText,
-            history,
-            context: loaded.context,
-            phase,
-            maxTokens,
-          })) {
-            send({ type: "chunk", text: chunk });
-          }
-        } else {
-          // Heavy route → Gemini with full RAG and the per-phase token cap.
-          for await (const chunk of generateAvatarResponseStream({
-            userText,
-            history,
-            context: loaded.context,
-            prefetchedEmbedding,
-            maxOutputTokens: maxTokens,
-          })) {
-            send({ type: "chunk", text: chunk });
+        } catch (err) {
+          console.error("[rag sse] both providers failed", err);
+          // Only emit the fallback utterance if we haven't already sent
+          // any real chunks — otherwise we'd append gibberish after a
+          // partial response.
+          if (emitted === 0) {
+            send({ type: "chunk", text: FALLBACK_UTTERANCE });
           }
         }
 
@@ -175,95 +188,3 @@ export async function POST(req: Request) {
     },
   });
 }
-
-/**
- * "Light" branch — short acknowledgement / bridging reply via Groq
- * llama-3.3-70b. Honours the per-phase token cap so discovery
- * acknowledgements stay snappy.
- */
-async function* streamLightResponse({
-  userText,
-  history,
-  context,
-  phase,
-  maxTokens,
-}: {
-  userText: string;
-  history: TurnMessage[];
-  context: RagContext;
-  phase: ConversationPhase;
-  maxTokens: number;
-}): AsyncGenerator<string> {
-  const avatarName = context.avatar?.name ?? "営業担当";
-  const goal = context.avatar?.goal ?? "自然な商談";
-  const productName = context.product?.name ?? "";
-  const productStrengths = context.product?.strengths ?? "";
-
-  // Phase 10.2: Groq needs enough persona + product context to hold
-  // a coherent conversation. Previously it had zero knowledge and
-  // gave generic answers. We inject avatar personality + product
-  // basics while keeping the prompt short enough for <100ms latency.
-  const avatarPersona = context.avatar?.system_prompt
-    ? context.avatar.system_prompt.slice(0, 300)
-    : `プロフェッショナルだが親しみやすい営業担当。落ち着いた口調で話す。`;
-
-  const charCap = Math.max(40, Math.round(maxTokens * 0.8));
-  const system = `あなたは${avatarName}というAI営業アバターです。
-
-# あなたのキャラクター
-${avatarPersona}
-
-# 担当商材
-${productName ? `名前: ${productName}` : "未設定"}
-${productStrengths ? `強み: ${productStrengths}` : ""}
-
-# ルール
-- 会話のゴール: ${goal}
-- 現在のフェーズ: ${phase}
-- 返答は1〜2文以内、${charCap}文字以内
-- 自然で親しみやすい日本語
-- 前置き禁止、絵文字禁止
-- 知らないことは「詳しくは担当からご説明します」と言う`;
-
-  const historyLines = history
-    .slice(-6)
-    .map((t) => `${t.role === "user" ? "相手" : "あなた"}: ${t.text}`)
-    .join("\n");
-
-  const userMessage = `# これまでの会話
-${historyLines || "(まだありません)"}
-
-# 相手の最新発言
-${userText}
-
-短く自然に返答してください。`;
-
-  try {
-    for await (const chunk of groqChatStream(
-      [
-        { role: "system", content: system },
-        { role: "user", content: userMessage },
-      ],
-      { temperature: 0.7, max_tokens: maxTokens }
-    )) {
-      yield chunk;
-    }
-  } catch (err) {
-    console.error("[rag light] groq stream failed, falling back", err);
-    // Fall back to Gemini if Groq fails.
-    for await (const chunk of generateAvatarResponseStream({
-      userText,
-      history,
-      context,
-      maxOutputTokens: maxTokens,
-    })) {
-      yield chunk;
-    }
-  }
-}
-
-// classifyIntent stays available via lib/classify.ts for any caller
-// that still wants the message-only classification (Next.js 14 route
-// files can only export the HTTP handlers + dynamic / runtime, so we
-// can't re-export it here even though it's used internally).
-void classifyIntent;

@@ -80,8 +80,15 @@ export function useDeepgramSTT({
 
         if (cancelled) return;
 
+        // Phase 11 endpointing: tuned so the server commits a turn
+        // quickly once the user pauses.
+        //   endpointing=300       - fire is_final 300ms after last voice
+        //   utterance_end_ms=1000 - guarantee an UtteranceEnd event
+        //                           1s after speech really stops
+        //   vad_events=true       - surface SpeechStarted/SpeechFinished
+        //                           so we can flush interim as final
         const wsUrl =
-          "wss://api.deepgram.com/v1/listen?model=nova-3&language=ja&smart_format=true&interim_results=true&encoding=opus";
+          "wss://api.deepgram.com/v1/listen?model=nova-3&language=ja&smart_format=true&interim_results=true&encoding=opus&endpointing=300&utterance_end_ms=1000&vad_events=true";
         const ws = new WebSocket(wsUrl, ["token", key]);
         wsRef.current = ws;
 
@@ -98,9 +105,31 @@ export function useDeepgramSTT({
           recorder.start(250);
         };
 
+        // Phase 11: with utterance_end_ms enabled Deepgram sends
+        // separate `UtteranceEnd` frames when the user stops talking.
+        // We buffer the last interim transcript so that, if the server
+        // never upgrades it to is_final (e.g. trailing silence), we
+        // can flush it ourselves when UtteranceEnd arrives.
+        let pendingInterim = "";
+
         ws.onmessage = (e) => {
           try {
             const data = JSON.parse(e.data as string);
+
+            // Deepgram event-type frames don't carry a transcript.
+            if (data?.type === "UtteranceEnd") {
+              if (externalMuteRef.current || mutedRef.current) return;
+              if (pendingInterim.trim()) {
+                const flushed = pendingInterim;
+                pendingInterim = "";
+                onFinalRef.current?.(flushed);
+              }
+              return;
+            }
+            if (data?.type === "SpeechStarted" || data?.type === "Metadata") {
+              return;
+            }
+
             const alt = data?.channel?.alternatives?.[0];
             if (!alt || !alt.transcript) return;
             // Drop anything that arrives while the avatar is speaking
@@ -108,8 +137,10 @@ export function useDeepgramSTT({
             // or accidental background noise would loop back in.
             if (externalMuteRef.current || mutedRef.current) return;
             if (data.is_final) {
+              pendingInterim = "";
               onFinalRef.current?.(alt.transcript);
             } else {
+              pendingInterim = alt.transcript;
               onInterimRef.current?.(alt.transcript);
             }
           } catch {

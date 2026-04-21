@@ -89,11 +89,13 @@ export default async function MeetPage({ params }: { params: { roomId: string } 
     );
   }
 
-  const avatarPipeline: "liveavatar" | "browser_tts" | "deepgram_tts" =
+  const avatarPipeline: "liveavatar" | "browser_tts" | "deepgram_tts" | "simli" =
     meeting.avatar_pipeline === "browser_tts"
       ? "browser_tts"
       : meeting.avatar_pipeline === "deepgram_tts"
       ? "deepgram_tts"
+      : meeting.avatar_pipeline === "simli"
+      ? "simli"
       : "liveavatar";
 
   // Voice-only pipelines don't need a HeyGen avatar id, so only

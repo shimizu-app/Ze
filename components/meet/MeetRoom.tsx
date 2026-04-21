@@ -13,6 +13,7 @@ import { SubtitleOverlay } from "./SubtitleOverlay";
 import { ControlBar } from "./ControlBar";
 import { ChatHistory } from "./ChatHistory";
 import { pickFiller, pickFillerBucket } from "./fillers";
+import { useSimli } from "./useSimli";
 import { detectPhase } from "@/lib/classify";
 
 interface LobbyAvatar {
@@ -45,7 +46,7 @@ interface Props {
   voiceId?: string;
   greeting: string;
   initialHostPaused: boolean;
-  avatarPipeline?: "liveavatar" | "browser_tts" | "deepgram_tts";
+  avatarPipeline?: "liveavatar" | "browser_tts" | "deepgram_tts" | "simli";
   /**
    * Phase 10: scripted opening lines. While there are still lines
    * unspoken, /api/rag returns the next one without calling any LLM
@@ -196,13 +197,17 @@ export function MeetRoom({
   // dead page. Tracked via deepgramFailed state.
   const [deepgramFailed, setDeepgramFailed] = useState(false);
   const [liveAvatarFailed, setLiveAvatarFailed] = useState(false);
+  const [simliFailed, setSimliFailed] = useState(false);
   const effectivePipeline =
-    pipeline === "liveavatar" && liveAvatarFailed
+    pipeline === "simli" && simliFailed
+      ? "browser_tts"
+      : pipeline === "liveavatar" && liveAvatarFailed
       ? "browser_tts"
       : pipeline === "deepgram_tts" && deepgramFailed
       ? "browser_tts"
       : pipeline;
 
+  const usingSimli = effectivePipeline === "simli";
   const usingLiveAvatar = effectivePipeline === "liveavatar" && USE_LIVEAVATAR;
   const usingHeyGenStreaming = effectivePipeline === "liveavatar" && !USE_LIVEAVATAR;
   const usingBrowserTTS = effectivePipeline === "browser_tts";
@@ -213,6 +218,10 @@ export function MeetRoom({
     avatarName: heygenAvatarId,
     voiceId,
     enabled: started && usingHeyGenStreaming,
+  });
+  const simli = useSimli({
+    roomId,
+    enabled: started && usingSimli,
   });
   const liveAvatar = useLiveAvatar({
     roomId,
@@ -226,10 +235,14 @@ export function MeetRoom({
     enabled: started && usingDeepgramTTS,
   });
 
-  // If LiveAvatar or Deepgram TTS reports an error, fall back to
-  // browser_tts so the visitor still hears audio instead of a dead
-  // page. Typical cause: "No credits available for start session"
-  // on the LiveAvatar pipeline, or Deepgram INSUFFICIENT_PERMISSIONS.
+  // If Simli, LiveAvatar, or Deepgram TTS reports an error, fall back
+  // to browser_tts so the visitor still hears audio.
+  useEffect(() => {
+    if (pipeline === "simli" && simli.error && !simliFailed) {
+      console.warn("[meet] simli unavailable, falling back to browser_tts", simli.error);
+      setSimliFailed(true);
+    }
+  }, [pipeline, simli.error, simliFailed]);
   useEffect(() => {
     if (pipeline === "liveavatar" && liveAvatar.error && !liveAvatarFailed) {
       console.warn("[meet] liveavatar unavailable, falling back to browser_tts", liveAvatar.error);
@@ -243,28 +256,36 @@ export function MeetRoom({
     }
   }, [pipeline, deepgramTTS.error, deepgramFailed]);
 
-  const videoRef = usingBrowserTTS
+  const videoRef = usingSimli
+    ? simli.videoRef
+    : usingBrowserTTS
     ? browserTTS.videoRef
     : usingDeepgramTTS
     ? deepgramTTS.videoRef
     : usingLiveAvatar
     ? liveAvatar.videoRef
     : heyGen.videoRef;
-  const avatarStatus = usingBrowserTTS
+  const avatarStatus = usingSimli
+    ? simli.status
+    : usingBrowserTTS
     ? browserTTS.status
     : usingDeepgramTTS
     ? deepgramTTS.status
     : usingLiveAvatar
     ? liveAvatar.status
     : heyGen.status;
-  const avatarError = usingBrowserTTS
+  const avatarError = usingSimli
+    ? simli.error
+    : usingBrowserTTS
     ? browserTTS.error
     : usingDeepgramTTS
     ? deepgramTTS.error
     : usingLiveAvatar
     ? liveAvatar.error
     : heyGen.error;
-  const speak = usingBrowserTTS
+  const speak = usingSimli
+    ? simli.speak
+    : usingBrowserTTS
     ? browserTTS.speak
     : usingDeepgramTTS
     ? deepgramTTS.speak
@@ -447,7 +468,9 @@ export function MeetRoom({
   // onstart/onend events; LiveAvatar / HeyGen speak() kicks off a
   // streamed audio track that we don't have an explicit talking
   // signal for yet, so default to false and rely on echo cancellation.
-  const aiSpeaking = usingBrowserTTS
+  const aiSpeaking = usingSimli
+    ? simli.speaking
+    : usingBrowserTTS
     ? browserTTS.speaking
     : usingDeepgramTTS
     ? deepgramTTS.speaking
@@ -650,11 +673,19 @@ export function MeetRoom({
               speaking={usingBrowserTTS ? browserTTS.speaking : false}
               avatarImageUrl={selectedAvatarImage}
             />
+            {simliFailed && pipeline === "simli" && (
+              <div className="rounded-xl border border-amber/30 bg-amber/10 px-4 py-3 text-sm text-amber">
+                <strong>スタンダード → 音声モードに切替</strong>
+                <span className="text-white/60 ml-2">
+                  Simli アバターの接続に失敗しました。SIMLI_API_KEY を確認してください。
+                </span>
+              </div>
+            )}
             {liveAvatarFailed && pipeline === "liveavatar" && (
               <div className="rounded-xl border border-amber/30 bg-amber/10 px-4 py-3 text-sm text-amber">
-                <strong>プロモード → 音声モードに切替</strong>
+                <strong>プレミアム → 音声モードに切替</strong>
                 <span className="text-white/60 ml-2">
-                  LiveAvatar のクレジットが不足しています。HeyGen ダッシュボードでクレジットを追加すると動画アバターが使えます。
+                  LiveAvatar のクレジットが不足しています。HeyGen ダッシュボードでクレジットを追加してください。
                 </span>
               </div>
             )}

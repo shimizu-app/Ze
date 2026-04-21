@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleDemo(pipeline: "liveavatar" | "browser_tts" | "deepgram_tts") {
+  async function handleDemo(pipeline: "liveavatar" | "browser_tts" | "deepgram_tts" | "simli") {
     setDemoLoading(true);
     setError(null);
     try {
@@ -121,27 +121,37 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-white/50 mono">AI AVATAR SALES PLATFORM</p>
         </div>
 
-        {/* Demo buttons — お試しモード (free) vs プロモード (LiveAvatar) */}
-        <div className="grid grid-cols-2 gap-2 mb-4">
+        {/* 3-tier demo selection */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
           <button
             type="button"
-            onClick={() => handleDemo("deepgram_tts")}
+            onClick={() => handleDemo("browser_tts")}
             disabled={demoLoading || loading}
-            className="px-4 py-3 rounded-2xl border border-green/40 bg-green/10 hover:bg-green/20 text-green font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
+            className="px-3 py-3 rounded-2xl border border-green/40 bg-green/10 hover:bg-green/20 text-green font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
           >
             <span className="text-lg">🎧</span>
-            <span className="text-xs leading-tight">お試しモード</span>
-            <span className="mono text-[9px] text-green/70">FREE · 高品質音声</span>
+            <span className="text-xs leading-tight">ベーシック</span>
+            <span className="mono text-[9px] text-green/70">FREE · 声のみ</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDemo("simli")}
+            disabled={demoLoading || loading}
+            className="px-3 py-3 rounded-2xl border border-blue/40 bg-blue/10 hover:bg-blue/20 text-blue font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
+          >
+            <span className="text-lg">🧑‍💼</span>
+            <span className="text-xs leading-tight">スタンダード</span>
+            <span className="mono text-[9px] text-blue/70">動画アバター</span>
           </button>
           <button
             type="button"
             onClick={() => handleDemo("liveavatar")}
             disabled={demoLoading || loading}
-            className="px-4 py-3 rounded-2xl border border-ac/40 bg-ac/10 hover:bg-ac/20 text-ac font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
+            className="px-3 py-3 rounded-2xl border border-ac/40 bg-ac/10 hover:bg-ac/20 text-ac font-semibold transition disabled:opacity-50 flex flex-col items-center gap-1"
           >
-            <span className="text-lg">🎭</span>
-            <span className="text-xs leading-tight">プロモード</span>
-            <span className="mono text-[9px] text-ac/70">PAID · 映像+音声</span>
+            <span className="text-lg">✨</span>
+            <span className="text-xs leading-tight">プレミアム</span>
+            <span className="mono text-[9px] text-ac/70">高品質アバター</span>
           </button>
         </div>
         {demoLoading && (

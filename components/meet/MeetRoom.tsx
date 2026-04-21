@@ -27,6 +27,9 @@ interface LobbyVoice {
   quality: number;
 }
 
+const AVATAR_AVOID = /santa|xmas|christmas|halloween|pumpkin|witch|zombie|dragon|monster|alien|costume|mascot|cartoon|anime|portrait/i;
+const AVATAR_PREFER = /suit|business|professional|office|corporate|formal|executive|sales|manager|presenter|host|hr|lawyer|doctor|therapist|expert/i;
+
 // Feature flag: when not overridden, drive the meet room with the
 // @heygen/liveavatar-web-sdk pipeline. Set NEXT_PUBLIC_USE_LIVEAVATAR
 // =false on Vercel to fall back to the old streaming SDK for testing.
@@ -74,42 +77,50 @@ export function MeetRoom({
 
   // Lobby: avatar + voice selection before meeting starts.
   const [lobbyAvatars, setLobbyAvatars] = useState<LobbyAvatar[]>([]);
+  const [lobbyLoading, setLobbyLoading] = useState(true);
   const [lobbyVoices, setLobbyVoices] = useState<LobbyVoice[]>([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
   const [selectedAvatarImage, setSelectedAvatarImage] = useState<string | null>(null);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (started) return;
-    const AVOID = /santa|xmas|christmas|halloween|pumpkin|witch|zombie|dragon|monster|alien|costume|mascot|cartoon|anime|portrait/i;
-    const PREFER = /suit|business|professional|office|corporate|formal|executive|sales|manager|presenter|host|hr|lawyer|doctor|therapist|expert/i;
-    fetch("/api/heygen/avatars")
-      .then((r) => r.json())
-      .then((data) => {
+  const fetchAvatars = useCallback(async () => {
+    setLobbyLoading(true);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const r = await fetch("/api/heygen/avatars");
+        const data = await r.json();
         const raw = (data.avatars ?? [])
           .filter((a: { preview_image_url?: string; avatar_name?: string }) =>
-            a.preview_image_url && !AVOID.test(a.avatar_name ?? "")
+            a.preview_image_url && !AVATAR_AVOID.test(a.avatar_name ?? "")
           )
           .map((a: { avatar_id: string; avatar_name: string; preview_image_url: string }) => ({
             id: a.avatar_id,
             name: a.avatar_name,
             imageUrl: a.preview_image_url,
           }));
-        // Sort: professional/suit avatars first.
         raw.sort((a: LobbyAvatar, b: LobbyAvatar) => {
-          const aP = PREFER.test(a.name) ? 0 : 1;
-          const bP = PREFER.test(b.name) ? 0 : 1;
+          const aP = AVATAR_PREFER.test(a.name) ? 0 : 1;
+          const bP = AVATAR_PREFER.test(b.name) ? 0 : 1;
           return aP - bP;
         });
         const list = raw.slice(0, 12);
-        setLobbyAvatars(list);
-        if (list.length > 0 && !selectedAvatarId) {
-          setSelectedAvatarId(list[0].id);
-          setSelectedAvatarImage(list[0].imageUrl);
+        if (list.length > 0) {
+          setLobbyAvatars(list);
+          setSelectedAvatarId((prev) => prev ?? list[0].id);
+          setSelectedAvatarImage((prev) => prev ?? list[0].imageUrl);
+          setLobbyLoading(false);
+          return;
         }
-      })
-      .catch(() => {});
-  }, [started, selectedAvatarId]);
+      } catch { /* retry */ }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000));
+    }
+    setLobbyLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (started || lobbyAvatars.length > 0) return;
+    fetchAvatars();
+  }, [started, lobbyAvatars.length, fetchAvatars]);
 
   useEffect(() => {
     if (started) return;
@@ -509,45 +520,64 @@ export function MeetRoom({
             {contactName && <div className="text-white/60">{contactName} 様</div>}
           </div>
 
-          {lobbyAvatars.length > 0 && (
-            <div className="mb-6">
-              <div className="mono text-[10px] text-white/50 mb-3">AVATAR</div>
-              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                {lobbyAvatars.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => {
-                      setSelectedAvatarId(a.id);
-                      setSelectedAvatarImage(a.imageUrl);
-                    }}
-                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all hover:scale-105 ${
-                      selectedAvatarId === a.id
-                        ? "border-ac shadow-[0_0_20px_rgba(192,96,255,0.4)]"
-                        : "border-white/10 hover:border-white/30"
-                    }`}
-                  >
-                    {a.imageUrl ? (
-                      <img src={a.imageUrl} alt={a.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full bg-s2 flex items-center justify-center text-2xl">🎭</div>
-                    )}
-                    {selectedAvatarId === a.id && (
-                      <div className="absolute inset-0 bg-ac/20 flex items-center justify-center">
-                        <div className="w-6 h-6 rounded-full bg-ac flex items-center justify-center text-black text-xs font-bold">
-                          ✓
-                        </div>
-                      </div>
-                    )}
-                  </button>
-                ))}
+          <div className="mb-6">
+            <div className="mono text-[10px] text-white/50 mb-3">AVATAR</div>
+            {lobbyLoading && lobbyAvatars.length === 0 && (
+              <div className="text-center py-8 text-white/40 text-sm">
+                <div className="animate-spin inline-block w-5 h-5 border-2 border-white/20 border-t-ac rounded-full mb-2" />
+                <div>アバター読み込み中...</div>
               </div>
-              {selectedAvatarId && lobbyAvatars.find((a) => a.id === selectedAvatarId) && (
-                <div className="mt-2 text-xs text-white/50">
-                  {lobbyAvatars.find((a) => a.id === selectedAvatarId)?.name}
+            )}
+            {!lobbyLoading && lobbyAvatars.length === 0 && (
+              <div className="text-center py-6">
+                <div className="text-sm text-white/40 mb-3">アバターの取得に失敗しました</div>
+                <button
+                  onClick={fetchAvatars}
+                  className="px-4 py-2 text-xs border border-ac/40 rounded-lg hover:bg-ac/10 transition"
+                >
+                  再読み込み
+                </button>
+              </div>
+            )}
+            {lobbyAvatars.length > 0 && (
+              <>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {lobbyAvatars.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        setSelectedAvatarId(a.id);
+                        setSelectedAvatarImage(a.imageUrl);
+                      }}
+                      className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all hover:scale-105 ${
+                        selectedAvatarId === a.id
+                          ? "border-ac shadow-[0_0_20px_rgba(192,96,255,0.4)]"
+                          : "border-white/10 hover:border-white/30"
+                      }`}
+                    >
+                      {a.imageUrl ? (
+                        <img src={a.imageUrl} alt={a.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-s2 flex items-center justify-center text-2xl">🎭</div>
+                      )}
+                      {selectedAvatarId === a.id && (
+                        <div className="absolute inset-0 bg-ac/20 flex items-center justify-center">
+                          <div className="w-6 h-6 rounded-full bg-ac flex items-center justify-center text-black text-xs font-bold">
+                            ✓
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
+                {selectedAvatarId && lobbyAvatars.find((a) => a.id === selectedAvatarId) && (
+                  <div className="mt-2 text-xs text-white/50">
+                    {lobbyAvatars.find((a) => a.id === selectedAvatarId)?.name}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {lobbyVoices.length > 0 && (
             <div className="mb-8">

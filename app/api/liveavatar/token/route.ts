@@ -4,20 +4,36 @@ import { createLiveAvatarSessionToken, listLiveAvatars } from "@/lib/liveavatar"
 
 export const dynamic = "force-dynamic";
 
-// LiveAvatar requires UUID-format avatar IDs. HeyGen's v2 catalog
-// returns string IDs like "Abigail_expressive_2024112501" which
-// LiveAvatar rejects with a 422. This regex detects non-UUID IDs
-// so we can fall back to the LiveAvatar public catalog.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Retry wrapper for upstream LiveAvatar API calls. The API
+ * intermittently returns 503 (DNS cache overflow) — retrying
+ * after a short backoff resolves it.
+ */
+async function withRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRetryable = /503|502|504|DNS|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg);
+      if (isRetryable && attempt < maxAttempts) {
+        console.warn(`[liveavatar token] ${label} attempt ${attempt} failed (${msg}), retrying...`);
+        await new Promise((r) => setTimeout(r, attempt * 1500));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
 
 /**
  * POST /api/liveavatar/token
  * Body: { room_id }
- *
- * Looks up the meeting + linked avatar (or the account fallback) and
- * mints a LiveAvatar session token that the new SDK can use to
- * connect. Mirrors the existing /api/heygen/token contract so the
- * meet room can be flipped over with a feature flag.
  */
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -74,9 +90,8 @@ export async function POST(req: Request) {
       `[liveavatar token] avatar_id "${heygenAvatarId}" is not a UUID, picking from LiveAvatar catalog`
     );
     try {
-      const avatars = await listLiveAvatars();
+      const avatars = await withRetry(() => listLiveAvatars(), "catalog");
       if (avatars.length > 0) {
-        // Try to find one with a similar name, otherwise pick the first active one.
         const byName = avatars.find(
           (a) => a.name.toLowerCase().includes(heygenAvatarId.split("_")[0].toLowerCase())
         );
@@ -88,22 +103,23 @@ export async function POST(req: Request) {
         }
       }
     } catch (err) {
-      console.error("[liveavatar token] catalog lookup failed", err);
+      console.error("[liveavatar token] catalog lookup failed after retries", err);
     }
   }
 
   try {
-    const token = await createLiveAvatarSessionToken({
-      avatar_id: liveAvatarId,
-      voice_id: voiceId,
-      language: "ja",
-    });
+    const token = await withRetry(
+      () => createLiveAvatarSessionToken({
+        avatar_id: liveAvatarId,
+        voice_id: voiceId,
+        language: "ja",
+      }),
+      "session"
+    );
     return NextResponse.json(token);
   } catch (err) {
     console.error("[liveavatar token]", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "failed" },
-      { status: 500 }
-    );
+    const msg = err instanceof Error ? err.message : "failed";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

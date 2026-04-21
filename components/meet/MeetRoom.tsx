@@ -611,6 +611,14 @@ export function MeetRoom({
               speaking={usingBrowserTTS ? browserTTS.speaking : false}
               avatarImageUrl={selectedAvatarImage}
             />
+            {liveAvatarFailed && pipeline === "liveavatar" && (
+              <div className="rounded-xl border border-amber/30 bg-amber/10 px-4 py-3 text-sm text-amber">
+                <strong>プロモード → 音声モードに切替</strong>
+                <span className="text-white/60 ml-2">
+                  LiveAvatar のクレジットが不足しています。HeyGen ダッシュボードでクレジットを追加すると動画アバターが使えます。
+                </span>
+              </div>
+            )}
             <SubtitleOverlay userInterim={userInterim} aiLatest={aiLatest} />
             <ControlBar
               muted={muted}
